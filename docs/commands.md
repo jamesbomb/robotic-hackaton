@@ -421,6 +421,32 @@ curl -X POST http://localhost:8000/api/runtime \
 ```
 
 Nota safety: lo switch aggiorna configurazione, snapshot, robot card e audit log.
+Al cambio simulazione/fisico il backend **riavvia** anche il feed movimenti Cyberwave (MQTT).
+
+### Feed movimenti Cyberwave → Audit Timeline
+
+Con il backend avviato (`uvicorn`), SafeGround sottoscrive posizione/rotazione MQTT dei robot mobili
+(Go2, UGV Beast, SO-101) e pubblica eventi in timeline:
+
+- `CYBERWAVE_MOVEMENT_FEED_STARTED` — sottoscrizione attiva (lista robot + affect mode)
+- `CYBERWAVE_MOVEMENT_FEED` — aggiornamento posizione/yaw (throttle ~2s, delta minimo 3 cm / 3°)
+- `CYBERWAVE_MOVEMENT_FEED_STOPPED` — disconnessione feed
+
+Requisiti: `CYBERWAVE_API_KEY` in `.env`, twin mappati in `~/.cyberwave/`.
+Disabilitare con `SAFEGROUND_CYBERWAVE_MOVEMENT_FEED=false`.
+
+Al toggle **Simulata/Fisici** in header il feed si riconnette in `simulation` o `live`
+coerente con il runtime selezionato.
+
+### Risk map top-down (collega)
+
+Griglia **9×6** come `live_vision/vision.py`: asse X = direzione sinistra/destra,
+asse Y = distanza (lontano in alto, vicino in basso). Si popola ad ogni classificazione VLM
+(detections SAFE/DANGER/AVOID); la cella tiene il rischio più alto.
+
+- Pannello **Risk Map** in dashboard (aggiornamento via WebSocket `RISK_MAP_UPDATED`)
+- `GET /api/risk-map` — stato corrente
+- `POST /api/risk-map/clear` — azzera la griglia
 
 ## Robot Activation E Movimento Virtuale/Fisico
 

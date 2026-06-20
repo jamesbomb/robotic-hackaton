@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { classifyImage, classifyRobotFrame } from "../api";
+import VideoFeedOverlay, { type FeedDetection } from "./VideoFeedOverlay.vue";
 import type {
   CameraSource,
   CameraStream,
@@ -8,15 +8,9 @@ import type {
   FrameClassificationResult,
   MissionReport,
   Observation,
+  RiskMapState,
   RuntimeMode,
 } from "../types";
-
-interface VlmDetection {
-  class?: string;
-  risk?: string;
-  confidence?: number;
-  bbox?: number[];
-}
 
 const props = defineProps<{
   observation: Observation | null;
@@ -24,33 +18,29 @@ const props = defineProps<{
   streams: CameraStream[];
   runtimeMode: RuntimeMode;
   cameraSource: CameraSource;
+  riskMap: RiskMapState | null;
+  visionResult: FrameClassificationResult | null;
+  visionStatus: Record<string, unknown> | null;
 }>();
 
 const emit = defineEmits<{
   mark: [label: ClassificationLabel];
+  "risk-map-update": [riskMap: RiskMapState];
 }>();
 
-const VLM_PERIOD_MS = 5000;
-const SOURCE_SWITCH_DELAY_MS = 800;
+const LIVE_FRAME_MS = 120;
 
-const pcVideoRef = ref<HTMLVideoElement | null>(null);
-const pcCameraStatus = ref("PC camera standby.");
 const disabledStreamIds = ref<Set<string>>(new Set());
 const failedStreamIds = ref<Set<string>>(new Set());
+const pcFrameSrc = ref("");
+const pcCameraStatus = ref("Live vision worker starting...");
 
 const snapshotSrc = ref("");
 const snapshotLoading = ref(false);
 const snapshotError = ref("");
 const snapshotCapturedAt = ref<string | null>(null);
 
-const vlmResult = ref<FrameClassificationResult | null>(null);
-const vlmLoading = ref(false);
-const vlmError = ref("");
-const vlmSourceLabel = ref("starting");
-
-let pcCameraStream: MediaStream | null = null;
-let vlmTimer: number | null = null;
-let vlmSession = 0;
+let liveFrameTimer: number | null = null;
 let snapshotObjectUrl: string | null = null;
 
 const focusRobotId = computed(() => props.observation?.robot_id ?? "go2");
@@ -58,11 +48,13 @@ const robotStreams = computed(() => (props.cameraSource === "robot" ? props.stre
 const disabledStreamCount = computed(() => disabledStreamIds.value.size);
 
 const liveDetections = computed(() => {
-  const detections = vlmResult.value?.detections ?? [];
+  const detections = props.visionResult?.detections ?? [];
   return detections
-    .map((item) => item as VlmDetection)
+    .map((item) => item as FeedDetection)
     .filter((item) => Array.isArray(item.bbox) && item.bbox.length >= 4);
 });
+
+const overlayRiskMap = computed(() => props.riskMap ?? props.visionResult?.risk_map ?? null);
 
 const detectionCounts = computed(() => {
   const counts = { SAFE: 0, DANGER: 0, AVOID: 0 };
@@ -76,13 +68,22 @@ const detectionCounts = computed(() => {
 });
 
 const vlmStatusText = computed(() => {
-  if (vlmLoading.value) {
-    return `Analyzing ${vlmSourceLabel.value} frame...`;
+  const state = String(props.visionStatus?.vlm_state ?? "starting");
+  const source =
+    props.cameraSource === "pc"
+      ? `PC cam ${String(props.visionStatus?.camera_index ?? 0)}`
+      : `${focusRobotId.value} robot camera`;
+  const lastError = props.visionStatus?.last_error;
+  if (typeof lastError === "string" && lastError.length > 0) {
+    return lastError;
   }
-  if (vlmError.value) {
-    return vlmError.value;
+  if (state === "analyzing") {
+    return `Live vision analyzing ${source}...`;
   }
-  return `Active on ${vlmSourceLabel.value} · every ${VLM_PERIOD_MS / 1000}s`;
+  if (state === "error") {
+    return `Live vision error on ${source}.`;
+  }
+  return `Live vision active on ${source} · backend loop · every 5s`;
 });
 
 function clearSnapshotObjectUrl() {
@@ -90,33 +91,6 @@ function clearSnapshotObjectUrl() {
     URL.revokeObjectURL(snapshotObjectUrl);
     snapshotObjectUrl = null;
   }
-}
-
-function detectionOverlayStyle(bbox: number[] | undefined) {
-  if (!bbox || bbox.length < 4) {
-    return null;
-  }
-  const [a, b, c, d] = bbox;
-  if (Math.max(...bbox) <= 1) {
-    return {
-      left: `${(a * 100).toFixed(2)}%`,
-      top: `${(b * 100).toFixed(2)}%`,
-      width: `${(c * 100).toFixed(2)}%`,
-      height: `${(d * 100).toFixed(2)}%`,
-    };
-  }
-  return null;
-}
-
-function riskClassFromDetection(detection: VlmDetection) {
-  if (detection.risk === "DANGER") return "mine";
-  if (detection.risk === "SAFE") return "not_mine";
-  return "uncertain";
-}
-
-function detectionLabel(detection: VlmDetection) {
-  const confidence = Math.round((detection.confidence ?? 0) * 100);
-  return `${detection.risk ?? "?"} ${confidence}% · ${detection.class ?? "object"}`;
 }
 
 function isStreamEnabled(stream: CameraStream) {
@@ -147,22 +121,42 @@ function handleStreamError(stream: CameraStream) {
   failedStreamIds.value = new Set([...failedStreamIds.value, stream.twin_id]);
 }
 
-function capturePcFrameBase64(): string | null {
-  const video = pcVideoRef.value;
-  if (!video || video.videoWidth === 0 || video.videoHeight === 0) {
-    return null;
+async function refreshPcFrame() {
+  try {
+    const response = await fetch(`/api/vision/live-frame?t=${Date.now()}`);
+    if (!response.ok) {
+      pcCameraStatus.value = "Waiting for backend live vision frame...";
+      return;
+    }
+    const blob = await response.blob();
+    const nextUrl = URL.createObjectURL(blob);
+    if (pcFrameSrc.value.startsWith("blob:")) {
+      URL.revokeObjectURL(pcFrameSrc.value);
+    }
+    pcFrameSrc.value = nextUrl;
+    pcCameraStatus.value = `Backend vision loop · ${String(props.visionStatus?.fps ?? 0)} fps`;
+  } catch {
+    pcCameraStatus.value = "Live vision frame unavailable.";
   }
-  const canvas = document.createElement("canvas");
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  const context = canvas.getContext("2d");
-  if (!context) {
-    return null;
+}
+
+function startPcFrameLoop() {
+  stopPcFrameLoop();
+  void refreshPcFrame();
+  liveFrameTimer = window.setInterval(() => {
+    void refreshPcFrame();
+  }, LIVE_FRAME_MS);
+}
+
+function stopPcFrameLoop() {
+  if (liveFrameTimer !== null) {
+    window.clearInterval(liveFrameTimer);
+    liveFrameTimer = null;
   }
-  context.drawImage(video, 0, 0, canvas.width, canvas.height);
-  const dataUrl = canvas.toDataURL("image/jpeg", 0.88);
-  const [, payload] = dataUrl.split(",", 2);
-  return payload ?? null;
+  if (pcFrameSrc.value.startsWith("blob:")) {
+    URL.revokeObjectURL(pcFrameSrc.value);
+  }
+  pcFrameSrc.value = "";
 }
 
 async function captureSnapshot() {
@@ -203,157 +197,41 @@ async function captureSnapshot() {
   }
 }
 
-function stopVlmLoop() {
-  vlmSession += 1;
-  if (vlmTimer !== null) {
-    window.clearTimeout(vlmTimer);
-    vlmTimer = null;
-  }
-}
-
-function scheduleVlmTick(session: number, delayMs = 0) {
-  if (session !== vlmSession) {
-    return;
-  }
-  if (vlmTimer !== null) {
-    window.clearTimeout(vlmTimer);
-  }
-  vlmTimer = window.setTimeout(() => {
-    void runVlmRecognition(session);
-  }, delayMs);
-}
-
-async function runVlmRecognition(session: number) {
-  if (session !== vlmSession) {
-    return;
-  }
-
-  vlmLoading.value = true;
-  vlmError.value = "";
-  try {
-    if (props.cameraSource === "pc") {
-      vlmSourceLabel.value = "PC webcam";
-      const imageBase64 = capturePcFrameBase64();
-      if (!imageBase64) {
-        throw new Error("PC camera frame is not ready yet.");
-      }
-      const result = await classifyImage(imageBase64);
-      if (session !== vlmSession) {
-        return;
-      }
-      vlmResult.value = result;
-    } else {
-      vlmSourceLabel.value = `${focusRobotId.value} robot camera`;
-      const result = await classifyRobotFrame(focusRobotId.value);
-      if (session !== vlmSession) {
-        return;
-      }
-      vlmResult.value = result;
-    }
-  } catch (caught) {
-    if (session !== vlmSession) {
-      return;
-    }
-    vlmError.value = caught instanceof Error ? caught.message : "VLM request failed.";
-  } finally {
-    if (session === vlmSession) {
-      vlmLoading.value = false;
-      scheduleVlmTick(session, VLM_PERIOD_MS);
-    }
-  }
-}
-
-function restartVlmRecognition(reason = "source change") {
-  stopVlmLoop();
-  vlmResult.value = null;
-  vlmError.value = "";
-  vlmLoading.value = false;
-  vlmSourceLabel.value =
-    props.cameraSource === "pc"
-      ? "PC webcam"
-      : `${focusRobotId.value} robot camera`;
-  const session = vlmSession;
-  const delayMs = reason === "source change" ? SOURCE_SWITCH_DELAY_MS : 0;
-  scheduleVlmTick(session, delayMs);
-}
-
-async function startPcCamera() {
-  if (pcCameraStream) {
-    return;
-  }
-  if (!navigator.mediaDevices?.getUserMedia) {
-    pcCameraStatus.value = "PC camera not available in this browser.";
-    return;
-  }
-  pcCameraStatus.value = "Requesting PC camera permission.";
-  try {
-    pcCameraStream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: false,
-    });
-    if (pcVideoRef.value) {
-      pcVideoRef.value.srcObject = pcCameraStream;
-    }
-    pcCameraStatus.value = "PC camera active.";
-  } catch (caught) {
-    pcCameraStatus.value =
-      caught instanceof Error ? `PC camera unavailable: ${caught.message}` : "PC camera unavailable.";
-  }
-}
-
-function stopPcCamera() {
-  pcCameraStream?.getTracks().forEach((track) => track.stop());
-  pcCameraStream = null;
-  if (pcVideoRef.value) {
-    pcVideoRef.value.srcObject = null;
-  }
-  pcCameraStatus.value = "PC camera standby.";
-}
-
-async function applyCameraSource(cameraSource: CameraSource) {
+function applyCameraSource(cameraSource: CameraSource) {
   if (cameraSource === "pc") {
-    await startPcCamera();
+    startPcFrameLoop();
   } else {
-    stopPcCamera();
+    stopPcFrameLoop();
   }
-  restartVlmRecognition("source change");
 }
+
+watch(
+  () => props.visionResult?.risk_map,
+  (riskMap) => {
+    if (riskMap) {
+      emit("risk-map-update", riskMap);
+    }
+  },
+);
 
 onMounted(() => {
-  void applyCameraSource(props.cameraSource);
+  applyCameraSource(props.cameraSource);
 });
 
 onUnmounted(() => {
-  stopVlmLoop();
-  stopPcCamera();
+  stopPcFrameLoop();
   clearSnapshotObjectUrl();
 });
 
 watch(
-  () => [props.cameraSource, props.runtimeMode] as const,
-  (current, previous) => {
-    if (!previous) {
-      return;
+  () => props.cameraSource,
+  (cameraSource, previous) => {
+    if (cameraSource !== previous) {
+      applyCameraSource(cameraSource);
     }
-    const [cameraSource] = current;
-    const [previousCameraSource] = previous;
-    if (cameraSource !== previousCameraSource) {
-      void applyCameraSource(cameraSource);
-      return;
-    }
-    restartVlmRecognition("runtime change");
   },
 );
-watch(pcVideoRef, (video) => {
-  if (video && pcCameraStream) {
-    video.srcObject = pcCameraStream;
-  }
-});
-watch(focusRobotId, () => {
-  if (props.cameraSource === "robot") {
-    restartVlmRecognition("robot focus change");
-  }
-});
+
 watch(
   () => robotStreams.value.map((stream) => stream.twin_id),
   (streamIds) => {
@@ -372,7 +250,7 @@ watch(
   <section class="panel camera-panel">
     <div class="panel-title camera-section-title">
       <span>Live Video + VLM</span>
-      <small>{{ vlmResult?.model_id ?? "gemini-robotics-er" }}</small>
+      <small>{{ visionResult?.model_id ?? "gemini-robotics-er" }}</small>
     </div>
 
     <div class="recognition-toolbar">
@@ -381,24 +259,35 @@ watch(
         <span class="hud-danger">DANGER {{ detectionCounts.DANGER }}</span>
         <span class="hud-avoid">AVOID {{ detectionCounts.AVOID }}</span>
       </div>
-      <span :class="['vlm-status', { 'vlm-status-loading': vlmLoading, 'vlm-status-error': vlmError }]">
+      <span
+        :class="[
+          'vlm-status',
+          {
+            'vlm-status-loading': visionStatus?.vlm_state === 'analyzing',
+            'vlm-status-error': Boolean(visionStatus?.last_error),
+          },
+        ]"
+      >
         {{ vlmStatusText }}
       </span>
     </div>
-    <p v-if="vlmResult && !vlmResult.valid && !vlmError" class="subtle">
-      {{ vlmResult.validation_errors?.join(" · ") || "VLM returned no valid detections." }}
+    <p v-if="visionResult && !visionResult.valid && !visionStatus?.last_error" class="subtle">
+      {{ visionResult.validation_errors?.join(" · ") || "VLM returned no valid detections." }}
     </p>
 
     <div v-if="cameraSource === 'pc'" class="live-feed-stage live-video-primary">
-      <video ref="pcVideoRef" autoplay muted playsinline></video>
-      <div
-        v-for="(detection, index) in liveDetections"
-        :key="`pc-${index}`"
-        :class="['live-detection-box', riskClassFromDetection(detection)]"
-        :style="detectionOverlayStyle(detection.bbox) ?? undefined"
-      >
-        <span>{{ detectionLabel(detection) }}</span>
-      </div>
+      <img
+        v-if="pcFrameSrc"
+        class="live-vision-frame"
+        :src="pcFrameSrc"
+        alt="Backend live vision frame"
+      />
+      <p v-else class="subtle live-vision-placeholder">Waiting for backend live vision loop...</p>
+      <VideoFeedOverlay
+        :detections="liveDetections"
+        :risk-map="overlayRiskMap"
+        observer-label="pc-camera"
+      />
       <small class="live-feed-caption">{{ pcCameraStatus }}</small>
     </div>
 
@@ -421,16 +310,12 @@ watch(
             @load="handleStreamLoad(stream)"
             @error="handleStreamError(stream)"
           />
-          <template v-if="stream.robot_id === focusRobotId">
-            <div
-              v-for="(detection, index) in liveDetections"
-              :key="`${stream.twin_id}-${index}`"
-              :class="['live-detection-box', riskClassFromDetection(detection)]"
-              :style="detectionOverlayStyle(detection.bbox) ?? undefined"
-            >
-              <span>{{ detectionLabel(detection) }}</span>
-            </div>
-          </template>
+          <VideoFeedOverlay
+            v-if="stream.robot_id === focusRobotId"
+            :detections="liveDetections"
+            :risk-map="overlayRiskMap"
+            :observer-label="stream.robot_id"
+          />
         </div>
         <div v-else class="live-stream-disabled">Stream disabled in Web UI.</div>
         <small v-if="failedStreamIds.has(stream.twin_id)" class="stream-error">
@@ -445,9 +330,19 @@ watch(
       No Cyberwave stream map found. Pair the robot camera first.
     </p>
 
-    <div v-if="vlmResult?.classification" :class="['classification', riskClassFromDetection({ risk: vlmResult.classification.label === 'MINE' ? 'DANGER' : vlmResult.classification.label === 'NOT_MINE' ? 'SAFE' : 'AVOID' })]">
-      Mission label: {{ vlmResult.classification.label }}
-      <small>{{ Math.round(vlmResult.classification.confidence * 100) }}%</small>
+    <div
+      v-if="visionResult?.classification"
+      :class="[
+        'classification',
+        visionResult.classification.label === 'MINE'
+          ? 'mine'
+          : visionResult.classification.label === 'NOT_MINE'
+            ? 'not_mine'
+            : 'uncertain',
+      ]"
+    >
+      Mission label: {{ visionResult.classification.label }}
+      <small>{{ Math.round(visionResult.classification.confidence * 100) }}%</small>
     </div>
 
     <div class="panel-title camera-section-title">

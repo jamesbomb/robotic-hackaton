@@ -111,31 +111,24 @@ def draw_dev(frame):
 
 # ── REASON: rischio -> azione + mappa-rischio che si popola ───────────────
 ACTION_OF = {"SAFE": "LASCIA", "DANGER": "RIMUOVI", "AVOID": "EVITA+TRACCIA"}
-GRID_COLS, GRID_ROWS = 9, 6
-RISK_RANK = {"SAFE": 1, "AVOID": 2, "DANGER": 3}    # tieni il piu' pericoloso per cella
-RISK_COL = {"SAFE": (90, 210, 90), "DANGER": (60, 60, 230), "AVOID": (200, 170, 110)}
-AREA_NEAR = 0.045     # frazione-frame ~ "vicino" (proxy distanza finche' non c'e' LiDAR)
-RANGE_MAX_M = 4.0     # se la detection porta range_m reale (LiDAR), 0..MAX -> righe
 MAP = {}              # (col,row) -> risk -- piantina top-down: x=direzione, y=distanza
 
-def _cell(d, w, h):
-    """detection -> cella (col=direzione/bearing, row=distanza; vicino in basso)."""
-    cx = d["center"][0]
-    col = min(GRID_COLS-1, max(0, int(cx / w * GRID_COLS)))               # x = bearing sinistra..destra
-    rng = d.get("range_m")
-    if rng is not None:                                                  # distanza reale (LiDAR)
-        nearness = 1.0 - min(1.0, max(0.0, rng / RANGE_MAX_M))
-    else:                                                                # proxy: bbox piu' grande = piu' vicino
-        x, y, bw, bh = d["_px"]; nearness = min(1.0, (bw * bh) / float(w * h) / AREA_NEAR)
-    row = min(GRID_ROWS-1, max(0, int(round(nearness * (GRID_ROWS-1)))))  # vicino -> riga in basso
-    return col, row
+from risk_map import (  # noqa: E402
+    AREA_NEAR,
+    GRID_COLS,
+    GRID_ROWS,
+    RANGE_MAX_M,
+    RISK_COL_BGR as RISK_COL,
+    RISK_RANK,
+    cell_from_detection as _cell,
+    update_cells,
+)
 
 def update_map(dets, w, h):
-    for d in dets:
-        cell = _cell(d, w, h)
-        cur = MAP.get(cell)
-        if cur is None or RISK_RANK[d["risk"]] > RISK_RANK[cur]:
-            MAP[cell] = d["risk"]
+    global MAP
+    merged = dict(MAP)
+    update_cells(merged, dets, w, h)
+    MAP = merged
 
 def draw_minimap(frame):
     h, w = frame.shape[:2]

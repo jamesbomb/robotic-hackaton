@@ -218,6 +218,24 @@ export interface CameraStream {
   status: string;
 }
 
+export interface RiskMapCell {
+  col: number;
+  row: number;
+  risk: "SAFE" | "DANGER" | "AVOID" | string;
+}
+
+export interface RiskMapState {
+  grid_cols: number;
+  grid_rows: number;
+  cells: RiskMapCell[];
+  frame_width: number;
+  frame_height: number;
+  updated_at: string | null;
+  observer_robot_id: string | null;
+  last_frame_id: string | null;
+  counts: Record<string, number>;
+}
+
 export interface CyberwaveRobot {
   twin_uuid: string;
   name: string;
@@ -287,6 +305,7 @@ export interface FrameClassificationResult {
   model_id: string | null;
   valid: boolean;
   validation_errors: string[];
+  risk_map?: RiskMapState;
 }
 
 export interface FrameRef {
@@ -364,6 +383,7 @@ export interface MissionSnapshot {
   scout_route: ScoutRouteResult | null;
   object_pickup_sessions: ObjectPickupSession[];
   active_object_pickup_session: ObjectPickupSession | null;
+  risk_map: RiskMapState;
 }
 
 export interface EventRecord {

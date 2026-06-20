@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import {
   activateRobot,
+  clearRiskMap,
   connectEvents,
   finishObjectPickup,
   getSnapshot,
@@ -27,6 +28,7 @@ import type {
   ClassificationLabel,
   CyberwaveRobot,
   EventRecord,
+  FrameClassificationResult,
   ManualArmCommandRequest,
   ManualArmResult,
   MapPoint,
@@ -37,6 +39,7 @@ import type {
   MovementControllerState,
   MovementTarget,
   ObjectPickupSession,
+  RiskMapState,
   RobotActivationRequest,
   RobotActivationState,
   RobotStatus,
@@ -70,6 +73,9 @@ const robotActivations = ref<RobotActivationState[]>([]);
 const scoutRoute = ref<ScoutRouteResult | null>(null);
 const objectPickupSessions = ref<ObjectPickupSession[]>([]);
 const activeObjectPickupSession = ref<ObjectPickupSession | null>(null);
+const riskMap = ref<RiskMapState | null>(null);
+const visionResult = ref<FrameClassificationResult | null>(null);
+const visionStatus = ref<Record<string, unknown> | null>(null);
 const runtimeStatus = ref<RuntimeStatus | null>(null);
 const manualArmResult = ref<ManualArmResult | null>(null);
 const baseMovementResult = ref<BaseMovementResult | null>(null);
@@ -133,6 +139,20 @@ async function refresh() {
   objectPickupSessions.value = snapshot.value.object_pickup_sessions;
   activeObjectPickupSession.value = snapshot.value.active_object_pickup_session;
   runtimeStatus.value = snapshot.value.runtime;
+  riskMap.value = snapshot.value.risk_map;
+  try {
+    const vision = await fetch("/api/vision/status").then((response) =>
+      response.ok ? response.json() : null,
+    );
+    if (vision?.latest) {
+      visionResult.value = vision.latest as FrameClassificationResult;
+    }
+    if (vision?.status) {
+      visionStatus.value = vision.status as Record<string, unknown>;
+    }
+  } catch {
+    // Vision worker may still be warming up.
+  }
 }
 
 async function runAction(action: () => Promise<MissionReport>) {
@@ -345,6 +365,31 @@ async function runObjectPickupReplay(sessionId: string, operatorId: string) {
 
 function onEvent(event: EventRecord) {
   events.value = [...events.value, event].slice(-200);
+  if (event.event_type === "RISK_MAP_UPDATED" && event.data?.risk_map) {
+    riskMap.value = event.data.risk_map as RiskMapState;
+  }
+  if (event.event_type === "VISION_CLASSIFIED" && event.data?.vision) {
+    visionResult.value = event.data.vision as FrameClassificationResult;
+    const nextRiskMap = (event.data.vision as FrameClassificationResult).risk_map;
+    if (nextRiskMap) {
+      riskMap.value = nextRiskMap;
+    }
+  }
+  if (event.event_type === "VISION_LOOP_STARTED" || event.event_type === "VISION_LOOP_STOPPED") {
+    visionStatus.value = (event.data ?? null) as Record<string, unknown> | null;
+  }
+}
+
+async function clearRiskMapPanel() {
+  try {
+    riskMap.value = await clearRiskMap();
+  } catch (caught) {
+    error.value = caught instanceof Error ? caught.message : "Unable to clear risk map.";
+  }
+}
+
+function onRiskMapUpdated(next: RiskMapState) {
+  riskMap.value = next;
 }
 
 function stopFromShortcut(label: string) {
@@ -565,7 +610,7 @@ onUnmounted(() => {
       </aside>
 
       <section class="center-stage">
-        <RiskMap :robots="robots" :observations="observations" :finding="finding" />
+        <RiskMap :risk-map="riskMap" :finding="finding" @clear="clearRiskMapPanel()" />
         <ScoutPathPlanner
           ref="scoutPathPlannerRef"
           :busy="busy"
@@ -578,7 +623,11 @@ onUnmounted(() => {
           :streams="cameraStreams"
           :runtime-mode="runtimeMode"
           :camera-source="cameraSource"
+          :risk-map="riskMap"
+          :vision-result="visionResult"
+          :vision-status="visionStatus"
           @mark="(label) => markCameraObject(label)"
+          @risk-map-update="onRiskMapUpdated"
         />
         <ObjectPickupPanel
           :active-session="activeObjectPickupSession"

@@ -16,6 +16,7 @@ import type {
   ObjectPickupSession,
   ObjectPickupStartRequest,
   MissionSnapshot,
+  RiskMapState,
   RobotActivationRequest,
   RobotActivationState,
   RobotStatus,
@@ -57,6 +58,10 @@ export function classifyImage(imageBase64: string, robotId = "pc-camera") {
 
 export function getSnapshot() {
   return request<MissionSnapshot>("/api/snapshot");
+}
+
+export function clearRiskMap() {
+  return request<RiskMapState>("/api/risk-map/clear", { method: "POST" });
 }
 
 export function getRuntime() {

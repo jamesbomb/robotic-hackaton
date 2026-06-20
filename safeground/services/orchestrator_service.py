@@ -61,8 +61,11 @@ from safeground.models import (
     ScoutRouteCommand,
     ScoutRouteResult,
     CyberwaveRobot,
+    RiskMapState,
 )
 from safeground.safety import SafetyGovernor
+from safeground.services.cyberwave_movement_feed import CyberwaveMovementFeedMonitor
+from safeground.services.live_vision_worker import LiveVisionWorker
 
 
 class OrchestratorService:
@@ -85,6 +88,19 @@ class OrchestratorService:
         }
         self.movement_controller = MovementControllerState()
         self.active_runner: MissionRunner | None = None
+        self._movement_feed_monitor = CyberwaveMovementFeedMonitor(
+            config=self.config,
+            emit_event=self.event_store.emit,
+            discover_robots=lambda: self.discover_cyberwave_robots(emit_event=False),
+            resolve_environment_id=self._resolve_cyberwave_environment_id,
+            open_twin=self._open_cyberwave_twin,
+            resolve_affect_mode=self._resolve_cyberwave_movement_affect_mode,
+            mission_id=self._movement_feed_mission_id,
+        )
+        self._movement_feed_started = False
+        self.risk_map_grid = self._build_risk_map_grid()
+        self._live_vision_worker = LiveVisionWorker(self)
+        self._latest_vision_result: dict | None = None
         self._sync_adapter_runtime()
         self._load_object_pickup_sessions()
 
@@ -143,7 +159,137 @@ class OrchestratorService:
                 "runtime": status.model_dump(mode="json"),
             },
         )
+        self.restart_cyberwave_movement_feed()
+        self.restart_live_vision()
         return status
+
+    def start_live_vision(self) -> None:
+        self._live_vision_worker.start()
+
+    def stop_live_vision(self) -> None:
+        self._live_vision_worker.stop()
+
+    def restart_live_vision(self) -> None:
+        self._live_vision_worker.restart()
+
+    def live_vision_status(self) -> dict:
+        return self._live_vision_worker.status()
+
+    def latest_live_vision_frame(self) -> bytes | None:
+        return self._live_vision_worker.latest_frame_jpeg()
+
+    def latest_live_vision_result(self) -> dict | None:
+        return self._live_vision_worker.latest_result() or self._latest_vision_result
+
+    def ingest_live_vision_result(
+        self,
+        payload: dict,
+        *,
+        frame_bytes: bytes,
+        robot_id: str,
+        frame_id: str,
+    ) -> dict:
+        detections = payload.get("detections")
+        if not isinstance(detections, list):
+            detections = []
+
+        classification = self._classification_from_detections(detections)
+        result = {
+            "frame_id": frame_id,
+            "robot_id": robot_id,
+            "frame_media_type": "image/jpeg",
+            "classification": classification.model_dump(mode="json"),
+            "detections": detections,
+            "model_id": payload.get("model_id"),
+            "valid": bool(detections),
+            "validation_errors": [] if detections else ["No detections from live vision loop."],
+        }
+        result = self._apply_risk_map_update(result, frame_bytes, robot_id=robot_id, frame_id=frame_id)
+        self._latest_vision_result = result
+        self.event_store.emit(
+            self.active_runner.mission.mission_id if self.active_runner else "system-vision",
+            EventType.VISION_CLASSIFIED,
+            state=self.active_runner.mission.state if self.active_runner else None,
+            robot_id=robot_id,
+            data={
+                "vision": result,
+                "detection_count": len(detections),
+            },
+        )
+        return result
+
+    def _classification_from_detections(self, detections: list[dict]) -> ClassificationResult:
+        risk_rank = {"DANGER": 3, "AVOID": 2, "SAFE": 1}
+        risk_map = {
+            "SAFE": (ClassificationLabel.NOT_MINE, RecommendedAction.REPORT),
+            "DANGER": (ClassificationLabel.MINE, RecommendedAction.REPORT),
+            "AVOID": (ClassificationLabel.UNCERTAIN, RecommendedAction.SECOND_VIEW),
+        }
+        if not detections:
+            return ClassificationResult(
+                label=ClassificationLabel.UNCERTAIN,
+                confidence=0.0,
+                bbox=None,
+                evidence=["Live vision loop returned no detections."],
+                recommended_action=RecommendedAction.HUMAN_REVIEW,
+            )
+
+        target = max(
+            detections,
+            key=lambda item: (
+                risk_rank.get(str(item.get("risk", "")).upper(), 0),
+                float(item.get("confidence") or 0.0),
+            ),
+        )
+        risk = str(target.get("risk") or "AVOID").upper()
+        label, action = risk_map.get(risk, (ClassificationLabel.UNCERTAIN, RecommendedAction.HUMAN_REVIEW))
+        bbox = target.get("bbox")
+        if isinstance(bbox, list) and len(bbox) >= 4 and max(bbox) <= 1:
+            x, y, w, h = bbox[:4]
+            width = int(round(float(w) * 640))
+            height = int(round(float(h) * 480))
+            left = int(round(float(x) * 640))
+            top = int(round(float(y) * 480))
+            pixel_bbox = [left, top, left + max(width, 1), top + max(height, 1)]
+        else:
+            pixel_bbox = bbox if isinstance(bbox, list) else None
+
+        return ClassificationResult(
+            label=label,
+            confidence=float(target.get("confidence") or 0.0),
+            bbox=pixel_bbox,
+            evidence=[
+                "SENSE = live_vision headless loop (gemini-robotics-er, detect_boxes).",
+                f"Colore dominante classificato come {target.get('class')} -> {risk}.",
+                f"{len(detections)} oggetti nel frame; scelto il bersaglio più pericoloso.",
+            ],
+            recommended_action=action,
+        )
+
+    def start_cyberwave_movement_feed(self) -> None:
+        if not env_bool("SAFEGROUND_CYBERWAVE_MOVEMENT_FEED", True):
+            return
+        self._movement_feed_started = True
+        self._movement_feed_monitor.start()
+
+    def stop_cyberwave_movement_feed(self) -> None:
+        self._movement_feed_started = False
+        self._movement_feed_monitor.stop()
+
+    def restart_cyberwave_movement_feed(self) -> None:
+        if not self._movement_feed_started:
+            return
+        self._movement_feed_monitor.restart()
+
+    def _movement_feed_mission_id(self) -> str:
+        if self.active_runner is not None:
+            return self.active_runner.mission.mission_id
+        return "system-movement-feed"
+
+    def _resolve_cyberwave_movement_affect_mode(self) -> str:
+        if self.config.runtime_mode == RuntimeMode.LIVE and not self.config.dry_run:
+            return "live"
+        return "simulation"
 
     def camera_streams(self) -> list[CameraStream]:
         if self.config.camera_source == CameraSource.PC:
@@ -366,17 +512,19 @@ class OrchestratorService:
         )
         classification = await self._build_cv_client().classify(frame_ref, "FIELD")
         raw_response = classification.raw_response if isinstance(classification.raw_response, dict) else {}
-        return {
+        detections = raw_response.get("detections", [])
+        result = {
             "frame_id": frame_id,
             "robot_id": robot_id,
             "frame_media_type": media_type,
             "frame_base64": base64.b64encode(validated).decode("ascii"),
             "classification": classification.result.model_dump(mode="json"),
-            "detections": raw_response.get("detections", []),
+            "detections": detections,
             "model_id": raw_response.get("model_id"),
             "valid": classification.valid,
             "validation_errors": classification.validation_errors,
         }
+        return self._apply_risk_map_update(result, validated, robot_id=robot_id, frame_id=frame_id)
 
     def _fetch_latest_robot_frame_sync(self, robot_id: str) -> bytes:
         api_key = os.environ.get("CYBERWAVE_API_KEY")
@@ -941,7 +1089,77 @@ class OrchestratorService:
             scout_route=self.latest_scout_route,
             object_pickup_sessions=self.object_pickup_sessions,
             active_object_pickup_session=self.active_object_pickup_session,
+            risk_map=self.risk_map_state(),
         )
+
+    def risk_map_state(self) -> RiskMapState:
+        return RiskMapState.model_validate(self.risk_map_grid.to_dict())
+
+    def clear_risk_map(self) -> RiskMapState:
+        self.risk_map_grid.clear()
+        state = self.risk_map_state()
+        self.event_store.emit(
+            self.active_runner.mission.mission_id if self.active_runner else "system-risk-map",
+            EventType.RISK_MAP_UPDATED,
+            state=self.active_runner.mission.state if self.active_runner else None,
+            robot_id=state.observer_robot_id,
+            data={"risk_map": state.model_dump(mode="json"), "cleared": True},
+        )
+        return state
+
+    def _build_risk_map_grid(self):
+        live_vision_dir = Path(__file__).resolve().parents[2] / "live_vision"
+        if live_vision_dir.exists() and str(live_vision_dir) not in sys.path:
+            sys.path.insert(0, str(live_vision_dir))
+        from risk_map import RiskMapGrid
+
+        return RiskMapGrid()
+
+    def _frame_dimensions(self, frame_bytes: bytes) -> tuple[int, int]:
+        try:
+            import cv2
+            import numpy as np
+
+            image = cv2.imdecode(np.frombuffer(frame_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+            if image is not None:
+                height, width = image.shape[:2]
+                return width, height
+        except ImportError:
+            pass
+        return 640, 480
+
+    def _apply_risk_map_update(
+        self,
+        result: dict,
+        frame_bytes: bytes,
+        *,
+        robot_id: str,
+        frame_id: str,
+    ) -> dict:
+        width, height = self._frame_dimensions(frame_bytes)
+        detections = result.get("detections")
+        if not isinstance(detections, list):
+            detections = []
+        self.risk_map_grid.update(
+            detections,
+            width=width,
+            height=height,
+            robot_id=robot_id,
+            frame_id=frame_id,
+        )
+        risk_map = self.risk_map_state()
+        result["risk_map"] = risk_map.model_dump(mode="json")
+        self.event_store.emit(
+            self.active_runner.mission.mission_id if self.active_runner else "system-risk-map",
+            EventType.RISK_MAP_UPDATED,
+            state=self.active_runner.mission.state if self.active_runner else None,
+            robot_id=robot_id,
+            data={
+                "risk_map": risk_map.model_dump(mode="json"),
+                "detection_count": len(detections),
+            },
+        )
+        return result
 
     def _build_cv_client(self):
         if env_bool("SAFEGROUND_USE_VLM", True):

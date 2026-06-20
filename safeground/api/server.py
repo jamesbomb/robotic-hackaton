@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from pydantic import BaseModel
 
 from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
@@ -19,6 +21,7 @@ from safeground.models import (
     RuntimeConfigRequest,
     ScoutRouteCommand,
 )
+from safeground.services.cyberwave_movement_feed import CyberwaveMovementFeedMonitor
 from safeground.services.orchestrator_service import OrchestratorService
 
 
@@ -27,7 +30,20 @@ class MissionStartRequest(BaseModel):
 
 
 service = OrchestratorService()
-app = FastAPI(title="SafeGround Ops Console", version="0.1.0")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    service.start_cyberwave_movement_feed()
+    service.start_live_vision()
+    try:
+        yield
+    finally:
+        service.stop_live_vision()
+        service.stop_cyberwave_movement_feed()
+
+
+app = FastAPI(title="SafeGround Ops Console", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -63,6 +79,16 @@ async def update_runtime(request: RuntimeConfigRequest):
 @app.get("/api/snapshot")
 async def snapshot():
     return await service.snapshot()
+
+
+@app.get("/api/risk-map")
+async def risk_map():
+    return service.risk_map_state()
+
+
+@app.post("/api/risk-map/clear")
+async def clear_risk_map():
+    return service.clear_risk_map()
 
 
 @app.post("/api/missions")
@@ -236,6 +262,26 @@ async def classify_image(request: ImageClassifyRequest):
         return await service.classify_image(request)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/vision/status")
+async def vision_status():
+    return {
+        "status": service.live_vision_status(),
+        "latest": service.latest_live_vision_result(),
+    }
+
+
+@app.get("/api/vision/live-frame")
+async def vision_live_frame():
+    frame_bytes = service.latest_live_vision_frame()
+    if not frame_bytes:
+        raise HTTPException(status_code=503, detail="Live vision frame not available yet.")
+    return Response(
+        content=frame_bytes,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/api/events")

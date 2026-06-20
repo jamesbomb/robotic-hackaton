@@ -120,6 +120,9 @@ class EventType(StrEnum):
     MISSION_STOPPED = "MISSION_STOPPED"
     RUNTIME_CONFIG_UPDATED = "RUNTIME_CONFIG_UPDATED"
     CYBERWAVE_ROBOTS_DISCOVERED = "CYBERWAVE_ROBOTS_DISCOVERED"
+    CYBERWAVE_MOVEMENT_FEED_STARTED = "CYBERWAVE_MOVEMENT_FEED_STARTED"
+    CYBERWAVE_MOVEMENT_FEED = "CYBERWAVE_MOVEMENT_FEED"
+    CYBERWAVE_MOVEMENT_FEED_STOPPED = "CYBERWAVE_MOVEMENT_FEED_STOPPED"
     ROBOT_ACTIVATION_UPDATED = "ROBOT_ACTIVATION_UPDATED"
     MOVEMENT_COMMAND_RECEIVED = "MOVEMENT_COMMAND_RECEIVED"
     MOVEMENT_AGENT_DECISION_MADE = "MOVEMENT_AGENT_DECISION_MADE"
@@ -136,6 +139,10 @@ class EventType(StrEnum):
     OBJECT_PICKUP_TEMPLATE_REPLAYED = "OBJECT_PICKUP_TEMPLATE_REPLAYED"
     SCOUT_ROUTE_PLANNED = "SCOUT_ROUTE_PLANNED"
     POINT_MAP_UPDATED = "POINT_MAP_UPDATED"
+    RISK_MAP_UPDATED = "RISK_MAP_UPDATED"
+    VISION_LOOP_STARTED = "VISION_LOOP_STARTED"
+    VISION_CLASSIFIED = "VISION_CLASSIFIED"
+    VISION_LOOP_STOPPED = "VISION_LOOP_STOPPED"
     ROUTE_RECORDED = "ROUTE_RECORDED"
     ROUTE_INVALIDATED = "ROUTE_INVALIDATED"
     ROUTE_REUSED_FOR_VERIFICATION = "ROUTE_REUSED_FOR_VERIFICATION"
@@ -454,6 +461,24 @@ class CameraStream(BaseModel):
     status: str = "configured"
 
 
+class RiskMapCell(BaseModel):
+    col: int
+    row: int
+    risk: str
+
+
+class RiskMapState(BaseModel):
+    grid_cols: int = 9
+    grid_rows: int = 6
+    cells: list[RiskMapCell] = Field(default_factory=list)
+    frame_width: int = 640
+    frame_height: int = 480
+    updated_at: datetime | None = None
+    observer_robot_id: str | None = None
+    last_frame_id: str | None = None
+    counts: dict[str, int] = Field(default_factory=lambda: {"SAFE": 0, "DANGER": 0, "AVOID": 0})
+
+
 class ObjectPickupStartRequest(BaseModel):
     operator_id: str = "operator"
     operator_confirmed: bool = False
@@ -642,3 +667,4 @@ class MissionSnapshot(BaseModel):
     scout_route: ScoutRouteResult | None = None
     object_pickup_sessions: list[ObjectPickupSession] = Field(default_factory=list)
     active_object_pickup_session: ObjectPickupSession | None = None
+    risk_map: RiskMapState = Field(default_factory=RiskMapState)

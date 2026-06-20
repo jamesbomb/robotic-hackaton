@@ -918,5 +918,158 @@ class SafeGroundP0Tests(unittest.TestCase):
         self.assertIn("/ws/events", paths)
 
 
+class CyberwaveMovementFeedTests(unittest.TestCase):
+    def test_should_emit_movement_update_respects_interval_and_delta(self) -> None:
+        from safeground.services.cyberwave_movement_feed import should_emit_movement_update
+
+        self.assertTrue(
+            should_emit_movement_update(
+                now=10.0,
+                last_emit_at=None,
+                last_position=None,
+                last_rotation=None,
+                position={"x": 0.0, "y": 0.0, "z": 0.0},
+                rotation=None,
+            )
+        )
+        self.assertFalse(
+            should_emit_movement_update(
+                now=11.0,
+                last_emit_at=10.0,
+                last_position={"x": 0.0, "y": 0.0, "z": 0.0},
+                last_rotation=None,
+                position={"x": 0.01, "y": 0.0, "z": 0.0},
+                rotation=None,
+            )
+        )
+        self.assertTrue(
+            should_emit_movement_update(
+                now=13.0,
+                last_emit_at=10.0,
+                last_position={"x": 0.0, "y": 0.0, "z": 0.0},
+                last_rotation=None,
+                position={"x": 0.2, "y": 0.0, "z": 0.0},
+                rotation=None,
+            )
+        )
+
+    def test_movement_feed_emits_audit_event(self) -> None:
+        from safeground.services.cyberwave_movement_feed import CyberwaveMovementFeedMonitor
+
+        emitted: list[tuple] = []
+
+        def capture_emit(mission_id, event_type, **kwargs):
+            emitted.append((mission_id, event_type, kwargs))
+
+        monitor = CyberwaveMovementFeedMonitor(
+            config=SafeGroundConfig(),
+            emit_event=capture_emit,
+            discover_robots=lambda: [],
+            resolve_environment_id=lambda: None,
+            open_twin=lambda *args, **kwargs: None,
+            resolve_affect_mode=lambda: "simulation",
+            mission_id=lambda: "mission-test",
+        )
+        monitor._affect_mode = "simulation"
+        monitor._on_position("go2", "758bee49-6668-4733-80f8-da1c0a7134b2", {"x": 1.0, "y": 2.0, "z": 0.0})
+
+        self.assertEqual(len(emitted), 1)
+        self.assertEqual(emitted[0][0], "mission-test")
+        self.assertEqual(emitted[0][1], EventType.CYBERWAVE_MOVEMENT_FEED)
+        self.assertEqual(emitted[0][2]["robot_id"], "go2")
+        self.assertEqual(emitted[0][2]["data"]["feed"], "position")
+
+    def test_runtime_update_restarts_started_movement_feed(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                service = OrchestratorService(SafeGroundConfig(event_log_path=Path(tmpdir) / "events.jsonl"))
+                service._movement_feed_started = True
+                restarts = {"count": 0}
+
+                def tracked_restart() -> None:
+                    restarts["count"] += 1
+
+                service._movement_feed_monitor.restart = tracked_restart  # type: ignore[method-assign]
+                await service.update_runtime(
+                    RuntimeConfigRequest(
+                        runtime_mode=RuntimeMode.SIMULATION,
+                        dry_run=True,
+                        operator_confirmed=True,
+                    )
+                )
+                return restarts["count"]
+
+        self.assertEqual(asyncio.run(_run()), 1)
+
+
+class RiskMapTests(unittest.TestCase):
+    def test_risk_map_updates_from_vlm_detections(self) -> None:
+        from live_vision.risk_map import RiskMapGrid, cell_from_detection
+
+        detection = {
+            "risk": "DANGER",
+            "center": (320, 240),
+            "bbox": [0.4, 0.4, 0.1, 0.2],
+        }
+        col, row = cell_from_detection(detection, 640, 480)
+        self.assertGreaterEqual(col, 0)
+        grid = RiskMapGrid()
+        grid.update([detection], width=640, height=480, robot_id="go2", frame_id="f1")
+        self.assertEqual(grid.cells[(col, row)], "DANGER")
+
+    def test_classify_response_includes_risk_map(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                service = OrchestratorService(SafeGroundConfig(event_log_path=Path(tmpdir) / "events.jsonl"))
+                async def fake_classify(frame_ref, scenario):
+                    from safeground.models import CVClassification, ClassificationLabel, ClassificationResult, RecommendedAction
+
+                    return CVClassification(
+                        result=ClassificationResult(
+                            label=ClassificationLabel.MINE,
+                            confidence=0.99,
+                            bbox=[10, 10, 40, 80],
+                            evidence=["test"],
+                            recommended_action=RecommendedAction.REPORT,
+                        ),
+                        raw_response={
+                            "model_id": "test-model",
+                            "detections": [
+                                {
+                                    "class": "orange",
+                                    "risk": "DANGER",
+                                    "confidence": 0.99,
+                                    "bbox": [0.4, 0.4, 0.12, 0.2],
+                                    "center": (320, 240),
+                                }
+                            ],
+                        },
+                        valid=True,
+                    )
+
+                class FakeClient:
+                    classify = staticmethod(fake_classify)
+
+                service._build_cv_client = lambda: FakeClient()
+                png = (
+                    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+                    b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc``\x00\x00"
+                    b"\x00\x02\x00\x01\xe2!\xbc3\x00\x00\x00\x00IEND\xaeB`\x82"
+                )
+                import base64
+
+                from safeground.models import ImageClassifyRequest
+
+                result = await service.classify_image(
+                    ImageClassifyRequest(image_base64=base64.b64encode(png).decode())
+                )
+                return result, service.risk_map_state(), service.events(limit=None)
+
+        result, state, events = asyncio.run(_run())
+        self.assertIn("risk_map", result)
+        self.assertGreater(len(state.cells), 0)
+        self.assertIn(EventType.RISK_MAP_UPDATED, [event.event_type for event in events])
+
+
 if __name__ == "__main__":
     unittest.main()

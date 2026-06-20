@@ -1,10 +1,18 @@
 # live_vision — strumento live di percezione (SENSE)
 
 Tool da laptop per il loop **sense** di SafeGround, con feedback visivo in tempo reale.
-Pensato per sviluppo/demo: poi la stessa logica si innesta sul Go2 (una riga: webcam -> `go2.capture_frame`).
+Pensato per sviluppo/demo: la stessa logica si innesta sul Go2 cambiando **solo la sorgente del frame**.
+
+## Sorgente del frame
+La fonte dell'immagine è un **unico punto configurabile** in cima a `vision.py`:
+```python
+SOURCE = "camera"   # "camera" (webcam/USB locale) | "go2" (camera del robot via Cyberwave)
+CAMERA_INDEX = 0    # indice camera locale; oppure passa --cam N
+```
+`camera` per sviluppo (qualsiasi webcam/USB; `c` cicla gli indici), `go2` per il frame del robot (`go2.capture_frame`). Nessun device personale hardcoded.
 
 ## Cosa fa
-- finestra live della camera (webcam/iPhone via Continuity, o domani il frame del Go2)
+- finestra live della sorgente scelta (camera locale o frame del Go2)
 - **SENSE definitivo = VLM hostato Cyberwave** (`google/models/gemini-robotics-er-16`, task `detect_boxes`):
   prompt -> box + etichetta colore -> mappa rischio **SAFE / DANGER / AVOID**
 - **monitor back-end live**: stato reale della run hostata (modello, exec-id, latenza, countdown) -> niente fase di stallo durante il riconoscimento
@@ -21,7 +29,7 @@ Pensato per sviluppo/demo: poi la stessa logica si innesta sul Go2 (una riga: we
 ```bash
 python -m venv .venv && .venv/bin/pip install opencv-python numpy cyberwave
 echo "LA_TUA_CYBERWAVE_API_KEY" > .cwkey   # NON committata (gitignore)
-.venv/bin/python vision.py --cam 1          # poi premi V per il VLM hostato
+.venv/bin/python vision.py                  # camera 0; --cam N per altra camera; premi V per il VLM hostato
 ```
 
 ## Mappa rischio

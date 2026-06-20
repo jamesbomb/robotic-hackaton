@@ -24,6 +24,12 @@ echo "LA_TUA_CYBERWAVE_API_KEY" > .cwkey   # NON committata (gitignore)
 .venv/bin/python live_vision/vision.py --cam 1  # poi premi V per il VLM hostato
 ```
 
+Se lanci il tool dalla cartella `live_vision`, usa invece:
+
+```bash
+../.venv/bin/python vision.py --cam 1
+```
+
 ## Mappa rischio
 verde -> SAFE (lascia) · arancione -> DANGER (rimuovi) · nera -> AVOID (instabile, traccia percorso sicuro)
 

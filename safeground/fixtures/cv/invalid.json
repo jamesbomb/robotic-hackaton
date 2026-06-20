@@ -1,0 +1,7 @@
+{
+  "label": "MINE",
+  "confidence": "very high",
+  "bbox": [120, 90],
+  "evidence": "not a list",
+  "recommended_action": "TOUCH_TARGET"
+}

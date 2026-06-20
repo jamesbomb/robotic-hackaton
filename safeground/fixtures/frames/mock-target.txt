@@ -1,0 +1,4 @@
+SafeGround P0 mock frame placeholder.
+
+This text fixture stands in for a captured RGB image during offline demos.
+The frame path is what flows through the capture -> CV -> report contract.

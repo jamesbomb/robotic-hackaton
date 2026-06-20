@@ -1,0 +1,7 @@
+{
+  "label": "MINE",
+  "confidence": 0.86,
+  "bbox": [120, 90, 320, 260],
+  "evidence": ["round dark mock object visible in center frame"],
+  "recommended_action": "REPORT"
+}

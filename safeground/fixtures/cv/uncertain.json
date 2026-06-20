@@ -1,0 +1,7 @@
+{
+  "label": "UNCERTAIN",
+  "confidence": 0.58,
+  "bbox": [210, 160, 300, 240],
+  "evidence": ["target is partially occluded", "shape is ambiguous from this angle"],
+  "recommended_action": "SECOND_VIEW"
+}

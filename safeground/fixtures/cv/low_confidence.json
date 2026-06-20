@@ -1,0 +1,7 @@
+{
+  "label": "MINE",
+  "confidence": 0.32,
+  "bbox": [100, 100, 260, 230],
+  "evidence": ["possible circular target but frame is degraded"],
+  "recommended_action": "HUMAN_REVIEW"
+}

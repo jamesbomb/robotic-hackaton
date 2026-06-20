@@ -1,0 +1,7 @@
+{
+  "label": "UNCERTAIN",
+  "confidence": 0.47,
+  "bbox": null,
+  "evidence": ["target is visible but no usable bounding box was produced"],
+  "recommended_action": "HUMAN_REVIEW"
+}

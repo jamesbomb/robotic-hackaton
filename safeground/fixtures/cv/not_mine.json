@@ -1,0 +1,7 @@
+{
+  "label": "NOT_MINE",
+  "confidence": 0.91,
+  "bbox": [180, 120, 360, 280],
+  "evidence": ["rectangular bright mock object matches safe prop"],
+  "recommended_action": "REPORT"
+}

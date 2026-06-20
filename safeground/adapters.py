@@ -72,6 +72,8 @@ class MockRobotAdapter:
             "hold_position",
             "move_forward",
             "move_backward",
+            "strafe_left",
+            "strafe_right",
             "rotate_left",
             "rotate_right",
         ]
@@ -207,6 +209,12 @@ class MockRobotAdapter:
         elif command.action == BaseMovementAction.MOVE_BACKWARD:
             self.pose.x -= command.distance_m * math.cos(self.pose.yaw)
             self.pose.y -= command.distance_m * math.sin(self.pose.yaw)
+        elif command.action == BaseMovementAction.STRAFE_LEFT:
+            self.pose.x += command.distance_m * math.cos(self.pose.yaw + math.pi / 2)
+            self.pose.y += command.distance_m * math.sin(self.pose.yaw + math.pi / 2)
+        elif command.action == BaseMovementAction.STRAFE_RIGHT:
+            self.pose.x += command.distance_m * math.cos(self.pose.yaw - math.pi / 2)
+            self.pose.y += command.distance_m * math.sin(self.pose.yaw - math.pi / 2)
         elif command.action == BaseMovementAction.ROTATE_LEFT:
             self.pose.yaw += math.radians(command.angle_degrees)
         elif command.action == BaseMovementAction.ROTATE_RIGHT:

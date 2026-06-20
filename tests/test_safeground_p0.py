@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from safeground.adapters import MockRobotAdapter
-from safeground.agents import CommandInterpreterAgent
+from safeground.agents import CommandInterpreterAgent, MovementCommandAgent
 from safeground.cli import run_command
 from safeground.cyberwave_replay import replay_cyberwave_recording
 from safeground.cv import MockCVClient
@@ -21,6 +21,8 @@ from safeground.models import (
     ManualArmAction,
     ManualArmCommand,
     MapPoint,
+    MovementCommandRequest,
+    MovementFSMState,
     MissionState,
     MovementTarget,
     ObjectMarkRequest,
@@ -398,6 +400,53 @@ class SafeGroundP0Tests(unittest.TestCase):
 
         self.assertNotIn(EventType.ROBOT_ACTIVATION_UPDATED, [event.event_type for event in events])
 
+    def test_robot_activation_accepts_discovered_digital_twin_without_local_adapter(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                config = self.cyberwave_config(tmpdir)
+                twin_uuid = "abc12345-0000-0000-0000-000000000000"
+                environment_path = config.cyberwave_config_dir / "environment.json"
+                raw_environment = json.loads(environment_path.read_text(encoding="utf-8"))
+                raw_environment["twin_uuids"].append(twin_uuid)
+                environment_path.write_text(json.dumps(raw_environment), encoding="utf-8")
+                (config.cyberwave_config_dir / f"{twin_uuid}.json").write_text(
+                    json.dumps(
+                        {
+                            "uuid": twin_uuid,
+                            "name": "Digital Twin Only",
+                            "asset": {
+                                "registry_id": "custom/digital-twin",
+                                "slug": "custom/digital-twin",
+                                "metadata": {"mqtt": {"commands": {"supported": ["capture_frame"]}}},
+                            },
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                service = OrchestratorService(config)
+                state = await service.activate_robot(
+                    "abc12345",
+                    RobotActivationRequest(operator_confirmed=True),
+                )
+                with self.assertRaises(PermissionError):
+                    await service.activate_robot(
+                        "abc12345",
+                        RobotActivationRequest(
+                            operator_confirmed=True,
+                            activation_mode=RobotActivationMode.ARMED,
+                            allow_physical=True,
+                        ),
+                    )
+                return state, service.events(limit=None)
+
+        state, events = asyncio.run(_run())
+
+        self.assertTrue(state.available)
+        self.assertTrue(state.ready)
+        self.assertTrue(state.virtual_enabled)
+        self.assertFalse(state.physical_enabled)
+        self.assertIn(EventType.ROBOT_ACTIVATION_UPDATED, [event.event_type for event in events])
+
     def test_virtual_base_movement_updates_pose_without_mqtt(self) -> None:
         async def _run():
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -433,6 +482,29 @@ class SafeGroundP0Tests(unittest.TestCase):
         self.assertEqual(messages, [])
         self.assertAlmostEqual(result.pose.x, 0.45)
         self.assertTrue(result.executed_sequence[-1].startswith("virtual_pose:"))
+
+    def test_virtual_base_movement_supports_lateral_strafe(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                service = OrchestratorService(self.cyberwave_config(tmpdir))
+                service.fleet["go2"].mqtt_publisher = FakeMqttPublisher()
+                result = await service.move_robot_base(
+                    "go2",
+                    BaseMovementCommand(
+                        action=BaseMovementAction.STRAFE_LEFT,
+                        movement_target=MovementTarget.VIRTUAL,
+                        operator_confirmed=True,
+                        distance_m=0.25,
+                    ),
+                )
+                return result
+
+        result = asyncio.run(_run())
+
+        self.assertTrue(result.virtual_applied)
+        self.assertEqual(result.action, BaseMovementAction.STRAFE_LEFT)
+        self.assertAlmostEqual(result.pose.x, 0.2)
+        self.assertAlmostEqual(result.pose.y, 0.55)
 
     def test_physical_base_movement_requires_armed_robot(self) -> None:
         async def _run():
@@ -680,6 +752,65 @@ class SafeGroundP0Tests(unittest.TestCase):
         self.assertIn(EventType.SAFETY_CHECK_PASSED, event_types)
         self.assertIn(EventType.BASE_MOVEMENT_COMMAND_APPLIED, event_types)
 
+    def test_movement_command_agent_maps_text_to_bounded_go2_command(self) -> None:
+        plan = MovementCommandAgent().plan(
+            MovementCommandRequest(
+                text="vai avanti piano",
+                operator_confirmed=True,
+            )
+        )
+
+        self.assertTrue(plan.accepted)
+        self.assertEqual(plan.robot_id, "go2")
+        self.assertEqual(plan.action, BaseMovementAction.MOVE_FORWARD)
+        self.assertIsNotNone(plan.command)
+        self.assertEqual(plan.command.action, BaseMovementAction.MOVE_FORWARD)
+
+    def test_go2_movement_command_runs_through_fsm(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                service = OrchestratorService(self.config(tmpdir))
+                result = await service.run_movement_command(
+                    MovementCommandRequest(
+                        text="ruota a sinistra",
+                        operator_confirmed=True,
+                        movement_target=MovementTarget.VIRTUAL,
+                    )
+                )
+                snapshot = await service.snapshot()
+                return result, snapshot, service.events(limit=None)
+
+        result, snapshot, events = asyncio.run(_run())
+
+        self.assertEqual(result.state, MovementFSMState.COMPLETED)
+        self.assertEqual(result.plan.action, BaseMovementAction.ROTATE_LEFT)
+        self.assertIsNotNone(result.result)
+        self.assertEqual(snapshot.movement_controller.state, MovementFSMState.COMPLETED)
+        event_types = [event.event_type for event in events]
+        self.assertIn(EventType.MOVEMENT_COMMAND_RECEIVED, event_types)
+        self.assertIn(EventType.MOVEMENT_AGENT_DECISION_MADE, event_types)
+        self.assertIn(EventType.MOVEMENT_STATE_CHANGED, event_types)
+
+    def test_go2_stop_updates_movement_fsm_and_robot_status(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                service = OrchestratorService(self.config(tmpdir))
+                await service.run_movement_command(
+                    MovementCommandRequest(text="avanti", operator_confirmed=True)
+                )
+                statuses = await service.stop_robot("go2")
+                snapshot = await service.snapshot()
+                return statuses, snapshot, service.events(limit=None)
+
+        statuses, snapshot, events = asyncio.run(_run())
+
+        go2 = next(status for status in statuses if status.robot_id == "go2")
+        self.assertEqual(go2.task, "stopped")
+        self.assertEqual(snapshot.movement_controller.state, MovementFSMState.STOPPED)
+        event_types = [event.event_type for event in events]
+        self.assertIn(EventType.ROBOT_STOP_REQUESTED, event_types)
+        self.assertIn(EventType.ROBOT_STOPPED, event_types)
+
     def test_p0_base_movement_is_restricted_to_mobile_robots(self) -> None:
         async def _run():
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -741,6 +872,7 @@ class SafeGroundP0Tests(unittest.TestCase):
         self.assertIn("/api/robots/{robot_id}/activate", paths)
         self.assertIn("/api/robots/{robot_id}/manual-arm", paths)
         self.assertIn("/api/robots/{robot_id}/move", paths)
+        self.assertIn("/api/robots/go2/movement-command", paths)
         self.assertIn("/api/robots/go2/route-plan", paths)
         self.assertIn("/api/camera-streams", paths)
         self.assertIn("/api/object-pickup/sessions", paths)

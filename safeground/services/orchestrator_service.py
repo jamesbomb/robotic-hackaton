@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from safeground.adapters import RobotAdapter, build_mock_fleet
-from safeground.agents import OperatorCommandAgent, OrchestratorAgent
+from safeground.agents import MovementCommandAgent, OperatorCommandAgent, OrchestratorAgent
 from safeground.cv import MockCVClient
 from safeground.env import env_bool, load_local_env
 from safeground.event_store import Event, JsonlEventStore
@@ -26,6 +26,11 @@ from safeground.models import (
     ManualArmResult,
     MapObstacle,
     MapPoint,
+    MovementAgentPlan,
+    MovementCommandRequest,
+    MovementCommandResult,
+    MovementControllerState,
+    MovementFSMState,
     MissionReport,
     MissionSnapshot,
     MissionState,
@@ -70,6 +75,7 @@ class OrchestratorService:
             robot_id: RobotActivationState(robot_id=robot_id)
             for robot_id in self.fleet
         }
+        self.movement_controller = MovementControllerState()
         self.active_runner: MissionRunner | None = None
         self._sync_adapter_runtime()
         self._load_object_pickup_sessions()
@@ -228,10 +234,17 @@ class OrchestratorService:
         robot_id: str,
         request: RobotActivationRequest,
     ) -> RobotActivationState:
-        if robot_id not in self.fleet:
-            raise KeyError(robot_id)
         if not request.operator_confirmed:
             raise PermissionError("operator confirmation is required before activating a robot")
+        discovered = {robot.robot_id for robot in self.discover_cyberwave_robots(emit_event=False)}
+        if robot_id not in self.fleet and robot_id not in discovered:
+            raise KeyError(robot_id)
+        if (
+            robot_id not in self.fleet
+            and request.activation_mode == RobotActivationMode.ARMED
+            and request.allow_physical
+        ):
+            raise PermissionError("physical arming requires a local SafeGround robot adapter")
         if (
             request.allow_physical
             and request.activation_mode == RobotActivationMode.ARMED
@@ -239,7 +252,6 @@ class OrchestratorService:
         ):
             raise PermissionError("physical arming requires live runtime with dry-run disabled")
 
-        discovered = {robot.robot_id for robot in self.discover_cyberwave_robots(emit_event=False)}
         state = self.robot_activations.setdefault(
             robot_id,
             RobotActivationState(robot_id=robot_id),
@@ -285,7 +297,7 @@ class OrchestratorService:
 
         cw = Cyberwave(api_key=api_key, environment_id=environment_id)
         twin = cw.twin(self._cyberwave_twin_slug(robot_id))
-        frame_bytes = twin.get_latest_frame()
+        frame_bytes = twin.get_frame(source="cloud")
         return frame_bytes, self._image_media_type(frame_bytes)
 
     async def start_object_pickup(
@@ -438,6 +450,34 @@ class OrchestratorService:
         self.latest_report = report
         return report
 
+    async def stop_robot(self, robot_id: str) -> list[RobotStatus]:
+        if robot_id not in self.fleet:
+            raise KeyError(robot_id)
+
+        robot = self.fleet[robot_id]
+        self.event_store.emit(
+            self.active_runner.mission.mission_id if self.active_runner else "system-movement",
+            EventType.ROBOT_STOP_REQUESTED,
+            state=self.active_runner.mission.state if self.active_runner else None,
+            robot_id=robot_id,
+            data={"reason": "Operator requested robot stop from UI."},
+        )
+        await robot.stop()
+        if robot_id == self.movement_controller.robot_id:
+            self._transition_movement(
+                MovementFSMState.STOPPED,
+                robot_id=robot_id,
+                reason="Operator stopped robot movement.",
+            )
+        self.event_store.emit(
+            self.active_runner.mission.mission_id if self.active_runner else "system-movement",
+            EventType.ROBOT_STOPPED,
+            state=self.active_runner.mission.state if self.active_runner else None,
+            robot_id=robot_id,
+            data={"status": (await robot.status()).model_dump(mode="json")},
+        )
+        return await self.robot_statuses()
+
     async def manual_arm_takeover(
         self,
         robot_id: str,
@@ -507,6 +547,92 @@ class OrchestratorService:
             data=result.model_dump(mode="json"),
         )
         return result
+
+    async def run_movement_command(
+        self,
+        request: MovementCommandRequest,
+    ) -> MovementCommandResult:
+        if request.robot_id != "go2":
+            raise PermissionError("LLM-assisted movement is restricted to Unitree Go2.")
+        if request.robot_id not in self.fleet:
+            raise KeyError(request.robot_id)
+
+        self._transition_movement(
+            MovementFSMState.PLANNING,
+            robot_id=request.robot_id,
+            reason="Operator submitted movement text.",
+        )
+        self.event_store.emit(
+            self.active_runner.mission.mission_id if self.active_runner else "system-movement",
+            EventType.MOVEMENT_COMMAND_RECEIVED,
+            state=self.active_runner.mission.state if self.active_runner else None,
+            robot_id=request.robot_id,
+            data=request.model_dump(mode="json"),
+        )
+
+        plan = MovementCommandAgent().plan(request)
+        self.event_store.emit(
+            self.active_runner.mission.mission_id if self.active_runner else "system-movement",
+            EventType.MOVEMENT_AGENT_DECISION_MADE,
+            state=self.active_runner.mission.state if self.active_runner else None,
+            robot_id=request.robot_id,
+            data=plan.model_dump(mode="json"),
+        )
+        if not plan.accepted or plan.command is None:
+            self._transition_movement(
+                MovementFSMState.REJECTED,
+                robot_id=request.robot_id,
+                plan=plan,
+                reason=plan.reason,
+            )
+            return MovementCommandResult(
+                state=self.movement_controller.state,
+                plan=plan,
+                reason=plan.reason,
+            )
+
+        self._transition_movement(
+            MovementFSMState.PLANNED,
+            robot_id=request.robot_id,
+            plan=plan,
+            reason=plan.reason,
+        )
+        self._transition_movement(
+            MovementFSMState.SAFETY_CHECKED,
+            robot_id=request.robot_id,
+            plan=plan,
+            reason="Movement command will run through the SafetyGovernor.",
+        )
+        self._transition_movement(
+            MovementFSMState.EXECUTING,
+            robot_id=request.robot_id,
+            plan=plan,
+            reason="Executing one bounded movement command.",
+        )
+        try:
+            result = await self.move_robot_base(request.robot_id, plan.command)
+        except PermissionError as exc:
+            self._transition_movement(
+                MovementFSMState.REJECTED,
+                robot_id=request.robot_id,
+                plan=plan,
+                reason=str(exc),
+            )
+            raise
+
+        self._transition_movement(
+            MovementFSMState.COMPLETED,
+            robot_id=request.robot_id,
+            plan=plan,
+            result=result,
+            reason="Movement command completed.",
+        )
+        return MovementCommandResult(
+            state=self.movement_controller.state,
+            plan=plan,
+            result=result,
+            reason=self.movement_controller.reason,
+        )
 
     async def plan_scout_route(self, command: ScoutRouteCommand) -> ScoutRouteResult:
         runner = self.active_runner or self._build_runner()
@@ -611,6 +737,7 @@ class OrchestratorService:
             camera_streams=self.camera_streams(),
             cyberwave_robots=self.discover_cyberwave_robots(emit_event=False),
             robot_activations=list(self.robot_activations.values()),
+            movement_controller=self.movement_controller,
             scout_route=self.latest_scout_route,
             object_pickup_sessions=self.object_pickup_sessions,
             active_object_pickup_session=self.active_object_pickup_session,
@@ -639,6 +766,35 @@ class OrchestratorService:
                 robot.runtime_mode = self.config.runtime_mode
             if hasattr(robot, "dry_run"):
                 robot.dry_run = self.config.dry_run
+
+    def _transition_movement(
+        self,
+        state: MovementFSMState,
+        *,
+        robot_id: str,
+        plan: MovementAgentPlan | None = None,
+        result: BaseMovementResult | None = None,
+        reason: str,
+    ) -> None:
+        previous = self.movement_controller.state
+        self.movement_controller = MovementControllerState(
+            state=state,
+            robot_id=robot_id,
+            last_plan=plan or self.movement_controller.last_plan,
+            last_result=result or self.movement_controller.last_result,
+            reason=reason,
+        )
+        self.event_store.emit(
+            self.active_runner.mission.mission_id if self.active_runner else "system-movement",
+            EventType.MOVEMENT_STATE_CHANGED,
+            state=self.active_runner.mission.state if self.active_runner else None,
+            robot_id=robot_id,
+            data={
+                "from": previous,
+                "to": state,
+                "controller": self.movement_controller.model_dump(mode="json"),
+            },
+        )
 
     def _resolve_base_movement_target(
         self,

@@ -413,6 +413,8 @@ Regole minime:
 
 ## 8. State machine
 
+Missione percezione/classificazione:
+
 ```text
 IDLE
   ↓
@@ -439,6 +441,25 @@ CLASSIFYING
                                ↓
                             COMPLETE
 ```
+
+Movimento Go2 da comando operatore/LLM:
+
+```text
+IDLE
+  ↓
+PLANNING
+  ↓
+PLANNED
+  ↓
+SAFETY_CHECKED
+  ↓
+EXECUTING
+  ├── COMPLETED
+  ├── STOPPED
+  └── REJECTED
+```
+
+L'agente movimento non invia velocity continua e non parla direttamente con l'hardware. Traduce solo testo operatore in un singolo micro-comando allow-list; `stop` resta percorso deterministico e deve essere disponibile dalla Web UI per fermare Go2 prima di impatti con oggetti.
 
 ---
 
@@ -560,10 +581,13 @@ Per ogni robot:
 - discovery da configurazione locale Cyberwave e, quando disponibile, SDK/API;
 - stato per robot: `available`, `ready`, `armed`, stream presente, azioni note;
 - `Ready Virtual` abilita solo movimento virtuale/simulation della dashboard Cyberwave;
-- `Arm Physical` e' disponibile solo in `live + dry_run=false` e richiede conferma operatore;
+- `Ready Virtual` deve funzionare per qualunque digital twin scoperto da Cyberwave, anche se non esiste ancora un adapter fisico locale SafeGround;
+- `Arm Physical` e' disponibile solo in `live + dry_run=false`, richiede conferma operatore e richiede un adapter SafeGround locale per quel robot;
 - il pannello movimento deve indicare il target comando: `virtual`, `physical`, `both` o `auto`;
-- il pannello movimento supporta comandi tastiera browser: `W`/freccia su avanti, `S`/freccia giu indietro, `A`/freccia sinistra rotazione sinistra, `D`/freccia destra rotazione destra, `Q`/`E` alternative rotazione, `Space` stop, `Esc` disabilita tastiera;
+- il pannello movimento supporta comandi tastiera browser: `W`/freccia su avanti, `S`/freccia giu indietro, `Shift+A` laterale sinistra, `Shift+D` laterale destra, `A`/freccia sinistra rotazione sinistra, `D`/freccia destra rotazione destra, `Q`/`E` alternative rotazione, `Space` stop, `Esc` disabilita tastiera;
 - la tastiera va abilitata esplicitamente, ignora input testuali/select e ogni pressione invia un solo micro-comando bounded;
+- il pannello movimento espone un comando testuale Go2 assistito da agente e mostra lo stato della FSM movimento;
+- `Stop Go2` deve restare disponibile all'operatore per fermare il robot prima di impatti con oggetti;
 - movimento fisico consentito solo se robot armato, micro-comando bounded e safety check passato;
 - ogni discovery, attivazione e movimento registra eventi audit.
 

@@ -101,11 +101,56 @@ Regole SafeGround:
 - Usare `cw.affect("live")` solo con operatore presente.
 - Validare `stop`, frame capture e health prima di locomozione o giunti.
 - Dalla console SafeGround usare `Safety -> Runtime` per passare da `mock` a `simulation` o `live`; disattivare `dry_run` solo per smoke test supervisionati.
-- Usare `Robot Activation -> Ready Virtual` per muovere solo i twin nella dashboard Cyberwave.
-- Usare `Robot Activation -> Arm Physical` solo in `live + dry_run=false`; e' il gate richiesto prima di ogni movimento fisico.
+- Usare `Robot Activation -> Ready Virtual` per abilitare i digital twin nella dashboard Cyberwave. Deve funzionare anche per twin scoperti da Cyberwave ma non presenti nella fleet fisica locale SafeGround.
+- Usare `Robot Activation -> Arm Physical` solo in `live + dry_run=false`; e' il gate richiesto prima di ogni movimento fisico e richiede un adapter SafeGround locale per quel robot.
 - In `live + dry_run=false`, i micro-movimenti base SafeGround vengono inviati via MQTT al controller policy: `safeground/robots/{robot_id}/commands` per default, da validare onsite.
 - Non inviare comandi motore raw da LLM.
 - Registrare `twin_id`, `environment_id`, `sensor_id`, driver attivo e comando di pairing riuscito.
+
+## Attivazione Digital Twin SafeGround
+
+SafeGround distingue due stati operativi:
+
+- `Ready Virtual`: abilita il digital twin a partecipare alla Web UI, alla
+  simulation e ai flussi auditati. E' consentito per ogni `robot_id` scoperto da
+  `/api/cyberwave/robots`, anche se non esiste un adapter fisico locale.
+- `Arm Physical`: abilita comandi verso hardware. E' consentito solo per robot
+  presenti nella fleet SafeGround locale, runtime `live`, `dry_run=false`,
+  operatore confermato e check fisici completati.
+
+Comandi API:
+
+```bash
+curl http://localhost:8000/api/cyberwave/robots
+```
+
+```bash
+ROBOT_ID=<robot_id-from-discovery>
+curl -X POST "http://localhost:8000/api/robots/${ROBOT_ID}/activate" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "operator_confirmed": true,
+    "activation_mode": "ready",
+    "allow_physical": false,
+    "reason": "activate discovered Cyberwave digital twin"
+  }'
+```
+
+Risultato atteso:
+
+```json
+{
+  "available": true,
+  "ready": true,
+  "armed": false,
+  "physical_enabled": false,
+  "virtual_enabled": true
+}
+```
+
+Se `allow_physical=true` su un twin senza adapter locale, SafeGround deve
+rifiutare l'arming: il twin resta utilizzabile in virtuale, ma non puo' muovere
+hardware.
 
 ## Asset Slug Attesi
 
@@ -153,7 +198,7 @@ from cyberwave import Cyberwave
 
 cw = Cyberwave(api_key=CYBERWAVE_API_KEY, environment_id=CYBERWAVE_ENVIRONMENT)
 dog = cw.twin("unitree/go2")
-img_bytes = dog.get_latest_frame()
+img_bytes = dog.get_frame(source="cloud")
 ```
 
 Il backend espone questo path come `GET /api/robots/go2/latest-frame`; la UI lo aggiorna periodicamente per mostrare un feed video-like. Non usare `move_forward()` per testare frame o video.

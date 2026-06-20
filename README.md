@@ -60,10 +60,18 @@ is `POST /api/robots/so101/manual-arm`; every command requires
 ## P0 Base Movements
 
 Mobile robots expose bounded base movement in mock/simulation P0:
-`move_forward`, `move_backward`, `rotate_left`, and `rotate_right`. Use
+`move_forward`, `move_backward`, `strafe_left`, `strafe_right`, `rotate_left`,
+and `rotate_right`. Use
 `POST /api/robots/go2/move` or the dashboard panel. Each command requires
 `operator_confirmed=true`, is wrapped by stop-before/stop-after sequencing, and
 is capped at 0.5 m or 15 degrees.
+
+Dashboard shortcuts are available from the Web UI help overlay with `?`.
+Enable `Keyboard Drive` in `Base Movement P0` before using `W/A/S/D` or arrow
+keys for Go2 micro-movements. `Shift+A` and `Shift+D` strafe laterally.
+`Space` and `Esc` trigger `Stop All`,
+`Ctrl/Cmd+K` focuses the command palette, `M/N/U` mark the latest camera object,
+and `R`/`C` plan or clear the scout route.
 
 The full movement capability map for Go2, UGV Beast, and SO-101 is documented
 in `docs/robot_movement_capability_map.md`.
@@ -75,12 +83,50 @@ Use the dashboard `Safety` panel or `POST /api/runtime` to switch between
 requires `operator_confirmed=true` and is audited. Current Python adapters are
 still mock-safe until Cyberwave live adapters are wired.
 
+For Cyberwave digital twin testing, select `simulation` in `Safety -> Runtime`
+and keep dry-run enabled. This matches the Cyberwave SDK pattern
+`cw.affect("simulation")`.
+
 ## Robot Activation
 
-The `Robot Activation` panel discovers local Cyberwave twins, marks robots ready
-for virtual dashboard movement, and arms physical movement only in
+The `Robot Activation` panel discovers local Cyberwave twins. Every discovered
+digital twin can be marked `Ready Virtual` so the Web UI can operate against the
+simulation/dashboard twin even when no local physical adapter exists. `Arm
+Physical` remains restricted to robots with a SafeGround adapter in
 `live + dry_run=false`. Base movement can target `virtual`, `physical`, `both`,
 or `auto`; physical targets require an armed robot and remain bounded.
+
+## Collaborator Mac Setup
+
+From a fresh macOS machine:
+
+```bash
+xcode-select --install
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+brew install python@3.13 node git
+git clone <REPO_URL> safeground
+cd safeground
+python3.13 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/pip install -e . cyberwave
+cd frontend && npm install && cd ..
+.venv/bin/python -m unittest discover -s tests
+cd frontend && npm run build && cd ..
+```
+
+Run backend and frontend:
+
+```bash
+.venv/bin/uvicorn safeground.api.server:app --reload
+```
+
+```bash
+cd frontend
+npm run dev
+```
+
+Open `http://localhost:5173`, then use `Robot Activation -> Ready Virtual` for
+the discovered digital twins.
 
 ## Assisted Object Pickup
 

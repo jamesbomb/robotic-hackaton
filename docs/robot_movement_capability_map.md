@@ -17,7 +17,7 @@ deve passare da allow-list, conferma operatore, timeout, stop e area libera.
 
 | Robot | Integrato nel codice | Endpoint/UI | Stato |
 | --- | --- | --- | --- |
-| Go2 | `move_forward`, `move_backward`, `rotate_left`, `rotate_right`, route plan mock | `POST /api/robots/go2/move`, `POST /api/robots/go2/route-plan`, pannello Base Movement | Mock/simulation contract; live adapter non cablato |
+| Go2 | `move_forward`, `move_backward`, `strafe_left`, `strafe_right`, `rotate_left`, `rotate_right`, route plan mock | `POST /api/robots/go2/move`, `POST /api/robots/go2/route-plan`, pannello Base Movement | Mock/simulation contract; live adapter non cablato |
 | UGV Beast | stessi comandi base mock se esposti dall'adapter | `POST /api/robots/{robot_id}/move` | Mock/simulation contract; driver Cyberwave/ROS2 non cablato |
 | SO-101 | `home`, `hold_position`, `nudge_joint`, `place_safe_marker` | `POST /api/robots/so101/manual-arm`, pannello SO-101 Takeover | Mock-safe; joint live adapter non cablato |
 
@@ -29,6 +29,8 @@ deve passare da allow-list, conferma operatore, timeout, stop e area libera.
 | --- | --- | --- | --- |
 | Avanti breve | `move_forward` | max 0.5 m | Stop prima/dopo |
 | Indietro breve | `move_backward` | max 0.5 m | Stop prima/dopo |
+| Laterale sinistra | `strafe_left` | max 0.5 m | Stop prima/dopo; shortcut `Shift+A` |
+| Laterale destra | `strafe_right` | max 0.5 m | Stop prima/dopo; shortcut `Shift+D` |
 | Ruota sinistra | `rotate_left` | max 15 deg | Stop prima/dopo |
 | Ruota destra | `rotate_right` | max 15 deg | Stop prima/dopo |
 | Stop | `stop` / `Stop All` | immediato | Deve restare sempre disponibile |

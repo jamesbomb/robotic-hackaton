@@ -5,8 +5,12 @@ import re
 from safeground.models import (
     AgentDecision,
     AgentDecisionType,
+    BaseMovementAction,
+    BaseMovementCommand,
     ClassificationLabel,
     ClassificationResult,
+    MovementAgentPlan,
+    MovementCommandRequest,
     RecommendedAction,
     RobotStatus,
     SafeGroundConfig,
@@ -18,6 +22,10 @@ from safeground.models import (
 STOP_TERMS = ("stop", "halt", "ferma", "fermati", "emergency", "blocca")
 STATUS_TERMS = ("status", "stato", "report", "timeline")
 START_TERMS = ("start", "avvia", "inizia", "ispeziona", "scansiona", "scan")
+FORWARD_TERMS = ("avanti", "forward", "prosegui", "procedi", "vai avanti", "move forward")
+BACKWARD_TERMS = ("indietro", "back", "backward", "retrocedi", "vai indietro", "move backward")
+LEFT_TERMS = ("sinistra", "left", "ruota a sinistra", "rotate left", "gira a sinistra")
+RIGHT_TERMS = ("destra", "right", "ruota a destra", "rotate right", "gira a destra")
 
 
 class CommandInterpreterAgent:
@@ -152,6 +160,71 @@ class OrchestratorAgent:
 
 class OperatorCommandAgent(CommandInterpreterAgent):
     """Named UI-facing command agent that reuses the safe P0 parser."""
+
+
+class MovementCommandAgent:
+    """Rule-based stand-in for the LLM movement planner.
+
+    It only emits one bounded P0 base command, never continuous velocity.
+    """
+
+    def plan(self, request: MovementCommandRequest) -> MovementAgentPlan:
+        normalized = " ".join(request.text.lower().strip().split())
+        action = self._extract_action(normalized)
+        if action is None:
+            reason = (
+                "Movement command rejected; use avanti/indietro/sinistra/destra. "
+                "Stop is handled by the deterministic robot stop control."
+            )
+            return MovementAgentPlan(
+                robot_id=request.robot_id,
+                text=request.text,
+                accepted=False,
+                reason=reason,
+                constraints=self._constraints(request),
+            )
+
+        command = BaseMovementCommand(
+            action=action,
+            movement_target=request.movement_target,
+            operator_id=request.operator_id,
+            operator_confirmed=request.operator_confirmed,
+            distance_m=request.distance_m,
+            angle_degrees=request.angle_degrees,
+            reason=f"{request.reason} Planned from text: {request.text}",
+        )
+        return MovementAgentPlan(
+            robot_id=request.robot_id,
+            text=request.text,
+            action=action,
+            command=command,
+            accepted=True,
+            reason="Movement text mapped to a single bounded P0 base command.",
+            constraints=self._constraints(request),
+        )
+
+    def _extract_action(self, text: str) -> BaseMovementAction | None:
+        if any(term in text for term in STOP_TERMS):
+            return None
+        if any(term in text for term in FORWARD_TERMS):
+            return BaseMovementAction.MOVE_FORWARD
+        if any(term in text for term in BACKWARD_TERMS):
+            return BaseMovementAction.MOVE_BACKWARD
+        if any(term in text for term in LEFT_TERMS):
+            return BaseMovementAction.ROTATE_LEFT
+        if any(term in text for term in RIGHT_TERMS):
+            return BaseMovementAction.ROTATE_RIGHT
+        return None
+
+    def _constraints(self, request: MovementCommandRequest) -> dict:
+        return {
+            "robot_id": request.robot_id,
+            "movement_target": request.movement_target,
+            "operator_confirmed": request.operator_confirmed,
+            "max_distance_m": 0.5,
+            "max_angle_degrees": 15.0,
+            "continuous_velocity": False,
+        }
 
 
 class MissionOrchestratorAgent(OrchestratorAgent):

@@ -9,15 +9,18 @@ import {
   replayObjectPickup,
   sendBaseMovementCommand,
   sendCommand,
+  sendGo2MovementCommand,
   sendManualArmCommand,
   sendScoutRoutePlan,
   startMission,
   startObjectPickup,
   stopMission,
+  stopRobot,
   updateRuntime,
 } from "./api";
 import type {
   BaseMovementCommandRequest,
+  BaseMovementAction,
   BaseMovementResult,
   CameraStream,
   ClassificationLabel,
@@ -28,6 +31,10 @@ import type {
   MapPoint,
   MissionReport,
   MissionSnapshot,
+  MovementCommandRequest,
+  MovementCommandResult,
+  MovementControllerState,
+  MovementTarget,
   ObjectPickupSession,
   RobotActivationRequest,
   RobotActivationState,
@@ -41,6 +48,7 @@ import CameraPanel from "./components/CameraPanel.vue";
 import ClassificationCard from "./components/ClassificationCard.vue";
 import CommandPalette from "./components/CommandPalette.vue";
 import EventTimeline from "./components/EventTimeline.vue";
+import KeyboardShortcutsOverlay from "./components/KeyboardShortcutsOverlay.vue";
 import ManualArmPanel from "./components/ManualArmPanel.vue";
 import MissionHeader from "./components/MissionHeader.vue";
 import ObjectPickupPanel from "./components/ObjectPickupPanel.vue";
@@ -49,6 +57,7 @@ import RobotActivationPanel from "./components/RobotActivationPanel.vue";
 import RobotFleetPanel from "./components/RobotFleetPanel.vue";
 import SafetyControls from "./components/SafetyControls.vue";
 import ScoutPathPlanner from "./components/ScoutPathPlanner.vue";
+import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 
 const snapshot = ref<MissionSnapshot | null>(null);
 const report = ref<MissionReport | null>(null);
@@ -63,6 +72,19 @@ const activeObjectPickupSession = ref<ObjectPickupSession | null>(null);
 const runtimeStatus = ref<RuntimeStatus | null>(null);
 const manualArmResult = ref<ManualArmResult | null>(null);
 const baseMovementResult = ref<BaseMovementResult | null>(null);
+const movementCommandResult = ref<MovementCommandResult | null>(null);
+const commandPaletteRef = ref<InstanceType<typeof CommandPalette> | null>(null);
+const scoutPathPlannerRef = ref<InstanceType<typeof ScoutPathPlanner> | null>(null);
+const shortcutHelpOpen = ref(false);
+const lastShortcut = ref<string | null>(null);
+const keyboardDriveEnabled = ref(false);
+const keyboardMovementConfig = ref({
+  enabled: false,
+  robotId: "go2",
+  movementTarget: "virtual" as MovementTarget,
+  distanceM: 0.25,
+  angleDegrees: 10,
+});
 const busy = ref(false);
 const error = ref<string | null>(null);
 let socket: WebSocket | null = null;
@@ -76,6 +98,17 @@ const observations = computed(() => report.value?.observations ?? []);
 const latestObservation = computed(() => observations.value.at(-1) ?? null);
 const finding = computed(() => report.value?.finding ?? null);
 const so101 = computed(() => robots.value.find((robot) => robot.robot_id === "so101") ?? null);
+const movementController = computed<MovementControllerState>(
+  () =>
+    snapshot.value?.movement_controller ?? {
+      state: "IDLE",
+      robot_id: "go2",
+      last_plan: null,
+      last_result: null,
+      reason: "Movement controller idle.",
+      updated_at: new Date().toISOString(),
+    },
+);
 
 async function refresh() {
   snapshot.value = await getSnapshot();
@@ -128,6 +161,67 @@ async function runBaseMovement(robotId: string, command: BaseMovementCommandRequ
   } finally {
     busy.value = false;
   }
+}
+
+async function runGo2MovementCommand(command: MovementCommandRequest) {
+  busy.value = true;
+  error.value = null;
+  try {
+    movementCommandResult.value = await sendGo2MovementCommand(command);
+    baseMovementResult.value = movementCommandResult.value.result;
+    await refresh();
+  } catch (caught) {
+    error.value = caught instanceof Error ? caught.message : "Unknown error";
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function runRobotStop(robotId: string) {
+  error.value = null;
+  lastShortcut.value = `Stop ${robotId}`;
+  try {
+    robots.value = await stopRobot(robotId);
+    await refresh();
+  } catch (caught) {
+    error.value = caught instanceof Error ? caught.message : "Unknown error";
+  }
+}
+
+function updateKeyboardMovementConfig(config: {
+  enabled: boolean;
+  robotId: string;
+  movementTarget: MovementTarget;
+  distanceM: number;
+  angleDegrees: number;
+}) {
+  keyboardDriveEnabled.value = config.enabled;
+  keyboardMovementConfig.value = config;
+}
+
+function setKeyboardDriveEnabled(enabled: boolean) {
+  keyboardDriveEnabled.value = enabled;
+  keyboardMovementConfig.value = {
+    ...keyboardMovementConfig.value,
+    enabled,
+  };
+}
+
+function runKeyboardMove(action: BaseMovementAction, label: string) {
+  const config = keyboardMovementConfig.value;
+  if (busy.value || !config.enabled) {
+    return;
+  }
+  lastShortcut.value = label;
+  void runBaseMovement(config.robotId, {
+    action,
+    movement_target: config.movementTarget,
+    operator_id: "keyboard",
+    operator_confirmed: true,
+    distance_m: config.distanceM,
+    angle_degrees: config.angleDegrees,
+    reason: `Keyboard shortcut ${label} requested bounded movement.`,
+  });
 }
 
 async function runRobotActivation(robotId: string, command: RobotActivationRequest) {
@@ -242,6 +336,135 @@ function onEvent(event: EventRecord) {
   events.value = [...events.value, event].slice(-200);
 }
 
+function stopFromShortcut(label: string) {
+  if (busy.value) {
+    return;
+  }
+  lastShortcut.value = label;
+  keyboardMovementConfig.value = {
+    ...keyboardMovementConfig.value,
+    enabled: false,
+  };
+  keyboardDriveEnabled.value = false;
+  void runAction(stopMission);
+}
+
+function holdSo101FromShortcut() {
+  if (busy.value || !so101.value) {
+    return;
+  }
+  lastShortcut.value = "H";
+  void runManualArmTakeover(so101.value.robot_id, {
+    action: "hold_position",
+    operator_id: "keyboard",
+    operator_confirmed: true,
+    reason: "Keyboard shortcut H requested SO-101 hold position.",
+  });
+}
+
+useKeyboardShortcuts(() => [
+  { key: "space", handler: () => stopFromShortcut("Space") },
+  {
+    key: "escape",
+    allowEditableTarget: true,
+    handler: () => {
+      if (shortcutHelpOpen.value) {
+        shortcutHelpOpen.value = false;
+      }
+      stopFromShortcut("Esc");
+    },
+  },
+  { key: "w", handler: () => runKeyboardMove("move_forward", "W") },
+  { key: "arrowup", handler: () => runKeyboardMove("move_forward", "ArrowUp") },
+  { key: "s", handler: () => runKeyboardMove("move_backward", "S") },
+  { key: "arrowdown", handler: () => runKeyboardMove("move_backward", "ArrowDown") },
+  { key: "a", shift: true, handler: () => runKeyboardMove("strafe_left", "Shift+A") },
+  { key: "d", shift: true, handler: () => runKeyboardMove("strafe_right", "Shift+D") },
+  { key: "a", handler: () => runKeyboardMove("rotate_left", "A") },
+  { key: "arrowleft", handler: () => runKeyboardMove("rotate_left", "ArrowLeft") },
+  { key: "d", handler: () => runKeyboardMove("rotate_right", "D") },
+  { key: "arrowright", handler: () => runKeyboardMove("rotate_right", "ArrowRight") },
+  {
+    key: "f",
+    handler: () => {
+      if (!busy.value) {
+        lastShortcut.value = "F";
+        void runAction(() => startMission("FIELD"));
+      }
+    },
+  },
+  {
+    key: "k",
+    ctrlOrMeta: true,
+    allowEditableTarget: true,
+    handler: () => {
+      lastShortcut.value = "Ctrl/Cmd+K";
+      commandPaletteRef.value?.focus();
+    },
+  },
+  {
+    key: "enter",
+    ctrlOrMeta: true,
+    allowEditableTarget: true,
+    handler: () => {
+      if (commandPaletteRef.value?.hasFocus()) {
+        lastShortcut.value = "Ctrl/Cmd+Enter";
+        commandPaletteRef.value.submit();
+      }
+    },
+  },
+  {
+    key: "m",
+    handler: () => {
+      if (!busy.value && latestObservation.value) {
+        lastShortcut.value = "M";
+        void markCameraObject("MINE");
+      }
+    },
+  },
+  {
+    key: "n",
+    handler: () => {
+      if (!busy.value && latestObservation.value) {
+        lastShortcut.value = "N";
+        void markCameraObject("NOT_MINE");
+      }
+    },
+  },
+  {
+    key: "u",
+    handler: () => {
+      if (!busy.value && latestObservation.value) {
+        lastShortcut.value = "U";
+        void markCameraObject("UNCERTAIN");
+      }
+    },
+  },
+  {
+    key: "r",
+    handler: () => {
+      lastShortcut.value = "R";
+      scoutPathPlannerRef.value?.submit();
+    },
+  },
+  {
+    key: "c",
+    handler: () => {
+      if (!keyboardMovementConfig.value.enabled) {
+        lastShortcut.value = "C";
+        scoutPathPlannerRef.value?.clear();
+      }
+    },
+  },
+  { key: "h", handler: holdSo101FromShortcut },
+  {
+    key: "?",
+    handler: () => {
+      shortcutHelpOpen.value = !shortcutHelpOpen.value;
+    },
+  },
+]);
+
 onMounted(async () => {
   await refresh();
   socket = connectEvents(onEvent);
@@ -264,6 +487,11 @@ onUnmounted(() => {
     />
 
     <p v-if="error" class="error-banner">{{ error }}</p>
+    <p class="shortcut-status">
+      <span v-if="lastShortcut">Last shortcut: <kbd>{{ lastShortcut }}</kbd></span>
+      <span v-else>Keyboard shortcuts available</span>
+      <button type="button" @click="shortcutHelpOpen = true">Keyboard Help <kbd>?</kbd></button>
+    </p>
 
     <div class="console-grid">
       <aside class="left-rail">
@@ -290,13 +518,23 @@ onUnmounted(() => {
           :activations="robotActivations"
           :runtime-mode="runtimeMode"
           :dry-run="dryRun"
+          :movement-controller="movementController"
           :busy="busy"
+          :keyboard-drive-enabled="keyboardDriveEnabled"
+          @update:keyboard-drive-enabled="setKeyboardDriveEnabled"
           @move="(robotId, command) => runBaseMovement(robotId, command)"
+          @movement-command="(command) => runGo2MovementCommand(command)"
+          @stop-robot="(robotId) => runRobotStop(robotId)"
+          @keyboard-config-change="updateKeyboardMovementConfig"
           @stop="() => runAction(stopMission)"
         />
         <p v-if="baseMovementResult" class="subtle">
           Last base move: {{ baseMovementResult.robot_id }} /
           {{ baseMovementResult.action }}
+        </p>
+        <p v-if="movementCommandResult" class="subtle">
+          Go2 movement FSM: {{ movementCommandResult.state }} /
+          {{ movementCommandResult.plan.action ?? "rejected" }}
         </p>
         <ManualArmPanel
           :robot="so101"
@@ -311,7 +549,12 @@ onUnmounted(() => {
 
       <section class="center-stage">
         <RiskMap :robots="robots" :observations="observations" :finding="finding" />
-        <ScoutPathPlanner :busy="busy" :route="scoutRoute" @plan="planScoutRoute" />
+        <ScoutPathPlanner
+          ref="scoutPathPlannerRef"
+          :busy="busy"
+          :route="scoutRoute"
+          @plan="planScoutRoute"
+        />
         <CameraPanel
           :observation="latestObservation"
           :streams="cameraStreams"
@@ -330,9 +573,13 @@ onUnmounted(() => {
 
       <aside class="right-rail">
         <ClassificationCard :report="report" />
-        <CommandPalette @command="(text, scenario) => runAction(() => sendCommand(text, scenario))" />
+        <CommandPalette
+          ref="commandPaletteRef"
+          @command="(text, scenario) => runAction(() => sendCommand(text, scenario))"
+        />
         <EventTimeline :events="events" />
       </aside>
     </div>
+    <KeyboardShortcutsOverlay :open="shortcutHelpOpen" @close="shortcutHelpOpen = false" />
   </main>
 </template>

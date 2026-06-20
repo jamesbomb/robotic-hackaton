@@ -13,10 +13,25 @@ export type MissionState =
 
 export type ClassificationLabel = "MINE" | "NOT_MINE" | "UNCERTAIN";
 export type ManualArmAction = "home" | "hold_position" | "nudge_joint" | "place_safe_marker";
-export type BaseMovementAction = "move_forward" | "move_backward" | "rotate_left" | "rotate_right";
+export type BaseMovementAction =
+  | "move_forward"
+  | "move_backward"
+  | "strafe_left"
+  | "strafe_right"
+  | "rotate_left"
+  | "rotate_right";
 export type RuntimeMode = "mock" | "simulation" | "live";
 export type MovementTarget = "auto" | "virtual" | "physical" | "both";
 export type RobotActivationMode = "ready" | "armed";
+export type MovementFSMState =
+  | "IDLE"
+  | "PLANNING"
+  | "PLANNED"
+  | "SAFETY_CHECKED"
+  | "EXECUTING"
+  | "COMPLETED"
+  | "STOPPED"
+  | "REJECTED";
 
 export interface RobotPose {
   x: number;
@@ -97,6 +112,44 @@ export interface BaseMovementResult {
   physical_applied: boolean;
   executed_sequence: string[];
   reason: string;
+}
+
+export interface MovementCommandRequest {
+  text: string;
+  robot_id?: string;
+  movement_target?: MovementTarget;
+  operator_id?: string;
+  operator_confirmed: boolean;
+  distance_m?: number;
+  angle_degrees?: number;
+  reason?: string;
+}
+
+export interface MovementAgentPlan {
+  plan_id: string;
+  robot_id: string;
+  text: string;
+  action: BaseMovementAction | null;
+  command: BaseMovementCommandRequest | null;
+  accepted: boolean;
+  reason: string;
+  constraints: Record<string, unknown>;
+}
+
+export interface MovementCommandResult {
+  state: MovementFSMState;
+  plan: MovementAgentPlan;
+  result: BaseMovementResult | null;
+  reason: string;
+}
+
+export interface MovementControllerState {
+  state: MovementFSMState;
+  robot_id: string;
+  last_plan: MovementAgentPlan | null;
+  last_result: BaseMovementResult | null;
+  reason: string;
+  updated_at: string;
 }
 
 export interface MapPoint {
@@ -290,6 +343,7 @@ export interface MissionSnapshot {
   camera_streams: CameraStream[];
   cyberwave_robots: CyberwaveRobot[];
   robot_activations: RobotActivationState[];
+  movement_controller: MovementControllerState;
   scout_route: ScoutRouteResult | null;
   object_pickup_sessions: ObjectPickupSession[];
   active_object_pickup_session: ObjectPickupSession | null;

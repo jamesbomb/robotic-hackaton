@@ -9,6 +9,7 @@ from safeground.models import (
     BaseMovementCommand,
     CommandRequest,
     ManualArmCommand,
+    MovementCommandRequest,
     ObjectMarkRequest,
     ObjectPickupFinishRequest,
     ObjectPickupReplayRequest,
@@ -143,8 +144,10 @@ async def robot_capabilities(robot_id: str):
 
 @app.post("/api/robots/{robot_id}/stop")
 async def stop_robot(robot_id: str):
-    await service.fleet[robot_id].stop()
-    return await service.robot_statuses()
+    try:
+        return await service.stop_robot(robot_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Robot not found") from exc
 
 
 @app.post("/api/robots/{robot_id}/activate")
@@ -173,6 +176,16 @@ async def move_robot_base(robot_id: str, request: BaseMovementCommand):
         raise HTTPException(status_code=404, detail="Robot not found")
     try:
         return await service.move_robot_base(robot_id, request)
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/robots/go2/movement-command")
+async def run_go2_movement_command(request: MovementCommandRequest):
+    try:
+        return await service.run_movement_command(request)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Robot not found") from exc
     except PermissionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

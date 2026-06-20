@@ -120,6 +120,8 @@ class SafetyGovernor:
         if command.action in {
             BaseMovementAction.MOVE_FORWARD,
             BaseMovementAction.MOVE_BACKWARD,
+            BaseMovementAction.STRAFE_LEFT,
+            BaseMovementAction.STRAFE_RIGHT,
         } and command.distance_m > self.config.max_base_move_distance_m:
             reasons.append("base movement distance exceeds configured P0 limit")
         if command.action in {

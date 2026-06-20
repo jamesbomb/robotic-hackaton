@@ -15,23 +15,23 @@ const emit = defineEmits<{
   runtimeChange: [command: RuntimeConfigRequest];
 }>();
 
-const liveEnabled = ref(props.runtimeMode === "live" && !props.dryRun);
+const selectedRuntimeMode = ref<RuntimeMode>(props.runtimeMode);
+const selectedDryRun = ref(props.dryRun);
 
 watch(
   () => [props.runtimeMode, props.dryRun] as const,
   ([runtimeMode, dryRun]) => {
-    liveEnabled.value = runtimeMode === "live" && !dryRun;
+    selectedRuntimeMode.value = runtimeMode;
+    selectedDryRun.value = dryRun;
   },
 );
 
-function toggleLive() {
+function updateRuntime() {
   emit("runtimeChange", {
-    runtime_mode: liveEnabled.value ? "live" : "mock",
-    dry_run: !liveEnabled.value,
+    runtime_mode: selectedRuntimeMode.value,
+    dry_run: selectedDryRun.value,
     operator_confirmed: true,
-    reason: liveEnabled.value
-      ? "Operator enabled live non-dry-run from the dashboard toggle."
-      : "Operator returned the dashboard to mock dry-run mode.",
+    reason: `Operator selected ${selectedRuntimeMode.value} runtime from the dashboard.`,
   });
 }
 </script>
@@ -54,17 +54,17 @@ function toggleLive() {
     </div>
 
     <div class="runtime-controls">
-      <label class="runtime-toggle">
-        <span>Dry run</span>
-        <input
-          v-model="liveEnabled"
-          type="checkbox"
-          role="switch"
-          :disabled="busy"
-          @change="toggleLive"
-        />
-        <span class="toggle-track" aria-hidden="true"></span>
-        <span>Live</span>
+      <label>
+        Runtime
+        <select v-model="selectedRuntimeMode" :disabled="busy" @change="updateRuntime">
+          <option value="mock">Mock</option>
+          <option value="simulation">Simulation</option>
+          <option value="live">Live</option>
+        </select>
+      </label>
+      <label class="inline-check">
+        <input v-model="selectedDryRun" type="checkbox" :disabled="busy" @change="updateRuntime" />
+        Keep dry-run enabled
       </label>
       <p class="subtle">{{ runtimeNote }}</p>
     </div>

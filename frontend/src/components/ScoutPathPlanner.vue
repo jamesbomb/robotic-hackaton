@@ -46,6 +46,12 @@ function submit() {
     emit("plan", draft.value);
   }
 }
+
+defineExpose({
+  clear,
+  submit,
+  canSubmit: computed(() => draft.value.length >= 2),
+});
 </script>
 
 <template>
@@ -85,9 +91,9 @@ function submit() {
 
     <div class="route-actions">
       <button type="button" :disabled="busy || draft.length < 2" @click="submit">
-        Plan Go2 Route
+        Plan Go2 Route <kbd>R</kbd>
       </button>
-      <button type="button" :disabled="busy" @click="clear">Clear</button>
+      <button type="button" :disabled="busy" @click="clear">Clear <kbd>C</kbd></button>
     </div>
 
     <p class="subtle">

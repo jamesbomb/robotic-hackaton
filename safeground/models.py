@@ -45,6 +45,8 @@ class ManualArmAction(StrEnum):
 class BaseMovementAction(StrEnum):
     MOVE_FORWARD = "move_forward"
     MOVE_BACKWARD = "move_backward"
+    STRAFE_LEFT = "strafe_left"
+    STRAFE_RIGHT = "strafe_right"
     ROTATE_LEFT = "rotate_left"
     ROTATE_RIGHT = "rotate_right"
 
@@ -59,6 +61,17 @@ class MovementTarget(StrEnum):
 class RobotActivationMode(StrEnum):
     READY = "ready"
     ARMED = "armed"
+
+
+class MovementFSMState(StrEnum):
+    IDLE = "IDLE"
+    PLANNING = "PLANNING"
+    PLANNED = "PLANNED"
+    SAFETY_CHECKED = "SAFETY_CHECKED"
+    EXECUTING = "EXECUTING"
+    COMPLETED = "COMPLETED"
+    STOPPED = "STOPPED"
+    REJECTED = "REJECTED"
 
 
 class RecommendedAction(StrEnum):
@@ -103,6 +116,11 @@ class EventType(StrEnum):
     RUNTIME_CONFIG_UPDATED = "RUNTIME_CONFIG_UPDATED"
     CYBERWAVE_ROBOTS_DISCOVERED = "CYBERWAVE_ROBOTS_DISCOVERED"
     ROBOT_ACTIVATION_UPDATED = "ROBOT_ACTIVATION_UPDATED"
+    MOVEMENT_COMMAND_RECEIVED = "MOVEMENT_COMMAND_RECEIVED"
+    MOVEMENT_AGENT_DECISION_MADE = "MOVEMENT_AGENT_DECISION_MADE"
+    MOVEMENT_STATE_CHANGED = "MOVEMENT_STATE_CHANGED"
+    ROBOT_STOP_REQUESTED = "ROBOT_STOP_REQUESTED"
+    ROBOT_STOPPED = "ROBOT_STOPPED"
     MANUAL_ARM_COMMAND_REQUESTED = "MANUAL_ARM_COMMAND_REQUESTED"
     MANUAL_ARM_COMMAND_APPLIED = "MANUAL_ARM_COMMAND_APPLIED"
     BASE_MOVEMENT_COMMAND_REQUESTED = "BASE_MOVEMENT_COMMAND_REQUESTED"
@@ -139,6 +157,8 @@ class SafeGroundConfig(BaseModel):
             "hold_position",
             "move_forward",
             "move_backward",
+            "strafe_left",
+            "strafe_right",
             "rotate_left",
             "rotate_right",
             "manual_arm_home",
@@ -323,6 +343,58 @@ class BaseMovementResult(BaseModel):
     physical_applied: bool = False
     executed_sequence: list[str] = Field(default_factory=list)
     reason: str
+
+
+class MovementCommandRequest(BaseModel):
+    text: str
+    robot_id: str = "go2"
+    movement_target: MovementTarget = MovementTarget.VIRTUAL
+    operator_id: str = "operator"
+    operator_confirmed: bool = False
+    distance_m: float = 0.25
+    angle_degrees: float = 10.0
+    reason: str = "Operator requested LLM-assisted bounded movement."
+
+    @field_validator("distance_m")
+    @classmethod
+    def validate_distance(cls, value: float) -> float:
+        if value <= 0 or value > 0.5:
+            raise ValueError("movement command distance must be > 0 and <= 0.5 m")
+        return value
+
+    @field_validator("angle_degrees")
+    @classmethod
+    def validate_angle(cls, value: float) -> float:
+        if value <= 0 or value > 15.0:
+            raise ValueError("movement command rotation must be > 0 and <= 15 degrees")
+        return value
+
+
+class MovementAgentPlan(BaseModel):
+    plan_id: str = Field(default_factory=lambda: f"movement-plan-{uuid4().hex[:8]}")
+    robot_id: str = "go2"
+    text: str
+    action: BaseMovementAction | None = None
+    command: BaseMovementCommand | None = None
+    accepted: bool
+    reason: str
+    constraints: dict[str, Any] = Field(default_factory=dict)
+
+
+class MovementCommandResult(BaseModel):
+    state: MovementFSMState
+    plan: MovementAgentPlan
+    result: BaseMovementResult | None = None
+    reason: str
+
+
+class MovementControllerState(BaseModel):
+    state: MovementFSMState = MovementFSMState.IDLE
+    robot_id: str = "go2"
+    last_plan: MovementAgentPlan | None = None
+    last_result: BaseMovementResult | None = None
+    reason: str = "Movement controller idle."
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class MapPoint(BaseModel):
@@ -549,6 +621,7 @@ class MissionSnapshot(BaseModel):
     camera_streams: list[CameraStream] = Field(default_factory=list)
     cyberwave_robots: list[CyberwaveRobot] = Field(default_factory=list)
     robot_activations: list[RobotActivationState] = Field(default_factory=list)
+    movement_controller: MovementControllerState = Field(default_factory=MovementControllerState)
     scout_route: ScoutRouteResult | None = None
     object_pickup_sessions: list[ObjectPickupSession] = Field(default_factory=list)
     active_object_pickup_session: ObjectPickupSession | None = None

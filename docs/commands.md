@@ -171,6 +171,133 @@ Questa sequenza prepara insieme:
 La mappa completa dei movimenti disponibili per Go2, UGV Beast e SO-101 e'
 in `docs/robot_movement_capability_map.md`.
 
+## Setup Mac Collaboratore
+
+Questa sequenza prepara un Mac pulito per lavorare su SafeGround in mock,
+simulation e digital twin. Sostituire `<REPO_URL>` con l'URL reale del repository.
+
+Prerequisiti macOS:
+
+```bash
+xcode-select --install
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+brew install python@3.13 node git
+```
+
+Clone e installazione progetto:
+
+```bash
+git clone <REPO_URL> safeground
+cd safeground
+python3.13 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/pip install -e . cyberwave
+cd frontend
+npm install
+cd ..
+```
+
+Verifica locale:
+
+```bash
+.venv/bin/python -m unittest discover -s tests
+cd frontend
+npm run build
+cd ..
+```
+
+Avvio Web UI in due terminali:
+
+```bash
+# Terminale 1
+cd safeground
+.venv/bin/uvicorn safeground.api.server:app --reload
+```
+
+```bash
+# Terminale 2
+cd safeground/frontend
+npm run dev
+```
+
+Aprire:
+
+```text
+http://localhost:5173
+```
+
+### Setup Cyberwave Per Digital Twin
+
+Installare Cyberwave CLI/Edge sul Mac del collaboratore:
+
+```bash
+curl -fsSL https://cyberwave.com/install.sh | bash
+cyberwave --version
+```
+
+Eseguire login/pairing quando richiesto dal setup Cyberwave:
+
+```bash
+cyberwave pair
+cyberwave edge logs
+```
+
+Se il setup Cyberwave produce file locali in `~/.cyberwave`, SafeGround li legge
+automaticamente da `~/.cyberwave`. In alternativa, puntare SafeGround a una copia
+della configurazione:
+
+```bash
+cp .env.example .env 2>/dev/null || touch .env
+cat >> .env <<'EOF'
+SAFEGROUND_RUNTIME_MODE=simulation
+SAFEGROUND_DRY_RUN=true
+EOF
+```
+
+Se Cyberwave richiede credenziali SDK per leggere frame o sincronizzare pose,
+aggiungerle a `.env`:
+
+```bash
+cat >> .env <<'EOF'
+CYBERWAVE_API_KEY=<api-key>
+CYBERWAVE_ENVIRONMENT=<environment-id>
+EOF
+```
+
+Smoke test discovery e attivazione virtuale:
+
+```bash
+curl http://localhost:8000/api/cyberwave/robots
+curl -X POST http://localhost:8000/api/robots/go2/activate \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "operator_confirmed": true,
+    "activation_mode": "ready",
+    "allow_physical": false,
+    "reason": "collaborator virtual twin activation"
+  }'
+```
+
+Se il twin scoperto non corrisponde a `go2`, usare il valore `robot_id` ritornato
+da `/api/cyberwave/robots`:
+
+```bash
+ROBOT_ID=<robot_id-from-discovery>
+curl -X POST "http://localhost:8000/api/robots/${ROBOT_ID}/activate" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "operator_confirmed": true,
+    "activation_mode": "ready",
+    "allow_physical": false,
+    "reason": "activate discovered digital twin"
+  }'
+```
+
+Regola importante: `Ready Virtual` deve funzionare per qualunque digital twin
+scoperto da Cyberwave. `Arm Physical` resta invece limitato ai robot con adapter
+SafeGround locale, runtime `live`, `dry_run=false`, operatore presente e check
+fisici completati.
+
 ## Avvio Web UI
 
 Terminale 1, backend FastAPI:
@@ -198,7 +325,7 @@ Flusso Web UI consigliato:
 2. Premere `Start Field Scan`.
 3. Controllare che timeline e pannelli mostrino Go2, UGV Beast, SO-101 e camera fissa.
 4. Verificare `ROUTE_RECORDED`, `ROUTE_REUSED_FOR_VERIFICATION` e `CONSENSUS_REACHED`.
-5. Dal pannello videocamera marcare il target con `Mine`, `Not mine` o `Uncertain` e verificare `OBJECT_MARKED` in timeline.
+5. Dal pannello videocamera disattivare eventuali feed non necessari con `Disable camera`, poi marcare il target con `Mine`, `Not mine` o `Uncertain` e verificare `OBJECT_MARKED` in timeline.
 6. Usare `Command Palette` con: `ispeziona il campo in cerca di mine`.
 7. Premere `Stop All` per dimostrare override umano.
 8. Usare `Safety -> Runtime` per passare tra `mock`, `simulation` e `live`.
@@ -217,10 +344,25 @@ Il backend parte in modo sicuro con `mock + dry_run=true`:
 .venv/bin/uvicorn safeground.api.server:app --reload
 ```
 
-Dalla Web UI aprire il pannello `Safety` e usare il selettore `Dry run / Live`:
+Dalla Web UI aprire il pannello `Safety` e usare il selettore `Runtime`:
 
-- `Dry run`: ritorna a `mock + dry_run=true`;
-- `Live`: passa a `live + dry_run=false`, da usare solo con operatore presente.
+- `mock`: usa solo fixture e adapter mock;
+- `simulation`: usa il percorso SafeGround/Cyberwave simulation per testare i digital twin;
+- `live`: prepara il runtime live, da usare solo con operatore presente;
+- `Keep dry-run enabled`: deve restare attivo per rehearsal e simulation non distruttive.
+
+Per testare l'app in simulation dalla API:
+
+```bash
+curl -X POST http://localhost:8000/api/runtime \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "runtime_mode": "simulation",
+    "dry_run": true,
+    "operator_confirmed": true,
+    "reason": "test SafeGround against Cyberwave digital twins"
+  }'
+```
 
 Per passare a live non dry-run via API:
 
@@ -245,7 +387,7 @@ Discovery dei robot Cyberwave disponibili:
 curl http://localhost:8000/api/cyberwave/robots
 ```
 
-Attivazione virtuale:
+Attivazione virtuale di Go2:
 
 ```bash
 curl -X POST http://localhost:8000/api/robots/go2/activate \
@@ -258,6 +400,25 @@ curl -X POST http://localhost:8000/api/robots/go2/activate \
   }'
 ```
 
+Attivazione virtuale di un digital twin generico scoperto da Cyberwave:
+
+```bash
+ROBOT_ID=<robot_id-from-api-cyberwave-robots>
+curl -X POST "http://localhost:8000/api/robots/${ROBOT_ID}/activate" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "operator_confirmed": true,
+    "activation_mode": "ready",
+    "allow_physical": false,
+    "reason": "virtual activation for discovered Cyberwave digital twin"
+  }'
+```
+
+`Ready Virtual` non richiede hardware fisico ne' adapter locale SafeGround: basta
+che il twin sia presente nella discovery Cyberwave. Serve per dashboard,
+simulation, pose virtuale e test dei flussi UI. Se invece il robot non e'
+scoperto e non e' nella fleet mock locale, l'API risponde `404`.
+
 Movimento virtuale del twin nella dashboard Cyberwave:
 
 ```bash
@@ -269,6 +430,35 @@ curl -X POST http://localhost:8000/api/robots/go2/move \
     "operator_confirmed": true,
     "distance_m": 0.25
   }'
+```
+
+Comando movimento Go2 assistito da agente/FSM:
+
+```bash
+curl -X POST http://localhost:8000/api/robots/go2/movement-command \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "text": "avanti",
+    "robot_id": "go2",
+    "movement_target": "virtual",
+    "operator_confirmed": true,
+    "distance_m": 0.25,
+    "angle_degrees": 10
+  }'
+```
+
+Il comando testuale viene convertito solo in micro-azioni allow-list (`move_forward`, `move_backward`, `rotate_left`, `rotate_right`) e attraversa la FSM:
+
+```text
+IDLE -> PLANNING -> PLANNED -> SAFETY_CHECKED -> EXECUTING -> COMPLETED
+```
+
+In caso di comando non valido o safety failure va in `REJECTED`; se l'operatore ferma Go2 va in `STOPPED`.
+
+Stop diretto del solo Go2:
+
+```bash
+curl -X POST http://localhost:8000/api/robots/go2/stop
 ```
 
 Per movimento fisico, prima portare il runtime a `live + dry_run=false`, poi
@@ -286,27 +476,38 @@ curl -X POST http://localhost:8000/api/robots/go2/activate \
 ```
 
 Nota safety: `physical` e `both` sono bloccati se il robot non e' armato,
-se `dry_run=true`, o se il runtime non e' `live`.
+se `dry_run=true`, se il runtime non e' `live`, o se il `robot_id` indica solo
+un digital twin scoperto senza adapter fisico SafeGround locale.
 
 ### Tastiera Web UI
 
-Nel pannello `Base Movement P0`, abilitare `Enable keyboard driving`.
-La mappatura e' pensata per browser e non usa velocity continua:
+Premere `?` nella Web UI per aprire l'overlay completo. Nel pannello
+`Base Movement P0`, abilitare `Enable keyboard driving` prima di usare tasti di
+movimento: ogni pressione invia un solo micro-comando bounded; tenere premuto un
+tasto non genera uno stream continuo.
 
-| Tasto | Azione |
-| --- | --- |
-| `W` / `ArrowUp` | `move_forward` |
-| `S` / `ArrowDown` | `move_backward` |
-| `A` / `ArrowLeft` | `rotate_left` |
-| `D` / `ArrowRight` | `rotate_right` |
-| `Q` | `rotate_left` alternativa ergonomica |
-| `E` | `rotate_right` alternativa ergonomica |
-| `Space` | `Stop All` |
-| `Esc` | disabilita keyboard driving |
+Mappatura safety-first:
 
-Ogni pressione invia un solo micro-comando bounded; tenere premuto un tasto
-non genera uno stream continuo. I tasti sono ignorati mentre il focus e' su
-input, select, textarea, button o campi editabili.
+- `W` / `ArrowUp`: Go2 `move_forward`.
+- `S` / `ArrowDown`: Go2 `move_backward`.
+- `Shift+A`: Go2 `strafe_left`.
+- `Shift+D`: Go2 `strafe_right`.
+- `A` / `ArrowLeft`: Go2 `rotate_left`.
+- `D` / `ArrowRight`: Go2 `rotate_right`.
+- `Space`: `Stop All`.
+- `Esc`: chiude l'overlay se aperto, disabilita Keyboard Drive e invoca `Stop All`.
+- `F`: avvia `Start Field Scan`.
+- `Ctrl/Cmd+K`: porta il focus sulla `Command Palette`.
+- `Ctrl/Cmd+Enter`: invia il comando solo quando la `Command Palette` ha focus.
+- `M`, `N`, `U`: marcano l'ultima osservazione come `MINE`, `NOT_MINE` o `UNCERTAIN`.
+- `R`: pianifica la route Go2 disegnata se ci sono almeno due waypoint.
+- `C`: svuota la draft route solo quando Keyboard Drive e' disattivato.
+- `H`: invia `hold_position` a SO-101 se il pannello/twin e' disponibile.
+
+I tasti globali sono ignorati mentre il focus e' su input, select, textarea,
+button o campi editabili, tranne `Ctrl/Cmd+K`, `Ctrl/Cmd+Enter` ed `Esc` dove
+serve un comportamento browser-operativo esplicito. Le azioni fisiche restano
+vincolate a runtime `live + dry_run=false` e robot armato.
 
 ### Frame Go2 In Web UI
 
@@ -317,7 +518,7 @@ from cyberwave import Cyberwave
 
 cw = Cyberwave(api_key=CYBERWAVE_API_KEY, environment_id=CYBERWAVE_ENVIRONMENT)
 dog = cw.twin("unitree/go2")
-img_bytes = dog.get_latest_frame()
+img_bytes = dog.get_frame(source="cloud")
 ```
 
 Nel backend SafeGround questo viene esposto come endpoint read-only:
@@ -327,6 +528,59 @@ GET /api/robots/go2/latest-frame
 ```
 
 La Web UI usa l'endpoint nel pannello camera quando il runtime e' `simulation` o `live`, aggiornando l'immagine con cache-busting. Non avvia movimenti: la riga demo `dog.move_forward()` del notebook non va usata per mostrare frame o video.
+
+### Disattivazione Selettiva Camere
+
+Nel pannello `Latest Frame`, ogni stream Cyberwave ha un pulsante
+`Disable camera` / `Enable camera`. La disattivazione e' locale alla Web UI:
+nasconde il feed e smette di renderizzare l'immagine MJPEG nel browser, ma non
+spegne il device, il driver Edge o la registrazione Cyberwave. Usare `Enable all`
+per riattivare tutti i feed visibili nella dashboard.
+
+### Debug Feed/Frame Mancanti
+
+Se la camera e' accesa ma la Web UI non mostra feed o frame:
+
+1. Verificare che backend e frontend siano entrambi attivi:
+
+```bash
+curl http://127.0.0.1:8000/api/health
+curl http://127.0.0.1:8000/api/camera-streams
+```
+
+2. Se `/api/camera-streams` ritorna URL tipo `http://localhost:8091`, verificare
+   che la porta risponda davvero:
+
+```bash
+python - <<'PY'
+import urllib.request
+for port in (8091, 8092):
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}", timeout=3) as response:
+            print(port, response.status, response.headers.get("content-type"))
+    except Exception as exc:
+        print(port, type(exc).__name__, exc)
+PY
+```
+
+3. Se le porte rispondono `Connection refused`, il problema e' nel processo camera
+   Cyberwave/ffmpeg/driver, non nel rendering Vue. Controllare:
+
+```bash
+cyberwave edge cameras
+cyberwave edge status
+cyberwave worker status
+cyberwave worker doctor --no-runtime
+```
+
+4. Per il box `Latest Frame`, assicurarsi di essere in `simulation` o `live` e di
+   avere credenziali SDK disponibili:
+
+```bash
+export CYBERWAVE_API_KEY=<api-key>
+export CYBERWAVE_ENVIRONMENT=<environment-id>
+curl http://127.0.0.1:8000/api/robots/go2/latest-frame --output /tmp/go2-frame.jpg
+```
 
 ## Object Pickup Workflow
 

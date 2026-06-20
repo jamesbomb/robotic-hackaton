@@ -7,6 +7,8 @@ import type {
   ManualArmCommandRequest,
   ManualArmResult,
   MissionReport,
+  MovementCommandRequest,
+  MovementCommandResult,
   ObjectMarkRequest,
   ObjectPickupFinishRequest,
   ObjectPickupReplayRequest,
@@ -109,6 +111,10 @@ export function stopMission() {
   return request<MissionReport>("/api/missions/stop", { method: "POST" });
 }
 
+export function stopRobot(robotId: string) {
+  return request<RobotStatus[]>(`/api/robots/${robotId}/stop`, { method: "POST" });
+}
+
 export function sendCommand(text: string, scenario: string) {
   return request<MissionReport>("/api/commands", {
     method: "POST",
@@ -132,6 +138,13 @@ export function sendManualArmCommand(robotId: string, command: ManualArmCommandR
 
 export function sendBaseMovementCommand(robotId: string, command: BaseMovementCommandRequest) {
   return request<BaseMovementResult>(`/api/robots/${robotId}/move`, {
+    method: "POST",
+    body: JSON.stringify(command),
+  });
+}
+
+export function sendGo2MovementCommand(command: MovementCommandRequest) {
+  return request<MovementCommandResult>("/api/robots/go2/movement-command", {
     method: "POST",
     body: JSON.stringify(command),
   });

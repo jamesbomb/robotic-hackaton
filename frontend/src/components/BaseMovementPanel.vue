@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import CollapsiblePanel from "./CollapsiblePanel.vue";
 import type { BaseMovementAction, BaseMovementCommandRequest, RobotStatus } from "../types";
 
 const props = defineProps<{ robots: RobotStatus[]; busy: boolean }>();
@@ -38,12 +39,11 @@ function send(action: BaseMovementAction) {
 </script>
 
 <template>
-  <section class="panel base-movement-panel">
-    <div class="panel-title">
-      <span>Base Movement P0</span>
-      <small>{{ selectedRobot?.robot_id ?? "no mobile robot" }}</small>
-    </div>
-
+  <CollapsiblePanel
+    title="Base Movement P0"
+    :meta="selectedRobot?.robot_id ?? 'no mobile robot'"
+    panel-class="base-movement-panel"
+  >
     <p>
       Micro-movements are operator-confirmed, stop-wrapped, and limited to 0.5 m or 15
       degrees.
@@ -80,5 +80,5 @@ function send(action: BaseMovementAction) {
       <button :disabled="busy || !selectedRobot" @click="send('rotate_left')">Rotate L</button>
       <button :disabled="busy || !selectedRobot" @click="send('rotate_right')">Rotate R</button>
     </div>
-  </section>
+  </CollapsiblePanel>
 </template>

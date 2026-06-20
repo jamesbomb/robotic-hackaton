@@ -18,14 +18,27 @@ from safeground.models import (
     EventType,
     ManualArmAction,
     ManualArmCommand,
+    MapPoint,
     MissionState,
+    ObjectMarkRequest,
     RecommendedAction,
     RouteSafetyStatus,
+    RuntimeConfigRequest,
+    RuntimeMode,
     SafeGroundConfig,
+    ScoutRouteCommand,
     UserIntentType,
 )
 from safeground.safety import SafetyGovernor
 from safeground.services.orchestrator_service import OrchestratorService
+
+
+class FakeMqttPublisher:
+    def __init__(self) -> None:
+        self.messages: list[tuple[str, dict]] = []
+
+    def publish(self, topic: str, payload: dict) -> None:
+        self.messages.append((topic, payload))
 
 
 class SafeGroundP0Tests(unittest.TestCase):
@@ -113,7 +126,7 @@ class SafeGroundP0Tests(unittest.TestCase):
                 config = self.config(tmpdir)
                 report, events = await run_command(
                     config,
-                    "ispeziona il campo con lattine arancioni nere e verdi",
+                    "ispeziona il campo in cerca di mine",
                     "FIELD",
                 )
                 return report, events.events
@@ -252,6 +265,110 @@ class SafeGroundP0Tests(unittest.TestCase):
         self.assertTrue(snapshot.events)
         self.assertEqual(snapshot.report, report)
 
+    def test_runtime_update_requires_confirmation_for_live_non_dry_run(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                service = OrchestratorService(self.config(tmpdir))
+                with self.assertRaises(PermissionError):
+                    await service.update_runtime(
+                        RuntimeConfigRequest(
+                            runtime_mode=RuntimeMode.LIVE,
+                            dry_run=False,
+                            operator_confirmed=False,
+                        )
+                    )
+                return service.events(limit=None)
+
+        events = asyncio.run(_run())
+
+        self.assertEqual(events, [])
+
+    def test_runtime_update_is_reflected_in_snapshot_and_robot_status(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                service = OrchestratorService(self.config(tmpdir))
+                status = await service.update_runtime(
+                    RuntimeConfigRequest(
+                        runtime_mode=RuntimeMode.LIVE,
+                        dry_run=False,
+                        operator_confirmed=True,
+                    )
+                )
+                snapshot = await service.snapshot()
+                robot_statuses = await service.robot_statuses()
+                return status, snapshot, robot_statuses, service.events(limit=None)
+
+        status, snapshot, robot_statuses, events = asyncio.run(_run())
+
+        self.assertEqual(status.runtime_mode, RuntimeMode.LIVE)
+        self.assertFalse(status.dry_run)
+        self.assertTrue(status.live_adapter_ready)
+        self.assertEqual(snapshot.runtime.runtime_mode, RuntimeMode.LIVE)
+        self.assertFalse(snapshot.runtime.dry_run)
+        self.assertTrue(all(robot.mode == RuntimeMode.LIVE for robot in robot_statuses))
+        self.assertIn(EventType.RUNTIME_CONFIG_UPDATED, [event.event_type for event in events])
+
+    def test_live_non_dry_run_base_movement_publishes_mqtt_sequence(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                service = OrchestratorService(self.config(tmpdir))
+                fake_mqtt = FakeMqttPublisher()
+                service.fleet["go2"].mqtt_publisher = fake_mqtt
+                await service.update_runtime(
+                    RuntimeConfigRequest(
+                        runtime_mode=RuntimeMode.LIVE,
+                        dry_run=False,
+                        operator_confirmed=True,
+                    )
+                )
+                result = await service.move_robot_base(
+                    "go2",
+                    BaseMovementCommand(
+                        action=BaseMovementAction.MOVE_FORWARD,
+                        operator_confirmed=True,
+                        distance_m=0.25,
+                    ),
+                )
+                return result, fake_mqtt.messages
+
+        result, messages = asyncio.run(_run())
+
+        self.assertTrue(result.applied)
+        self.assertFalse(result.dry_run)
+        self.assertEqual([payload["sequence_step"] for _, payload in messages], [
+            "stop_before_motion",
+            "move_forward",
+            "stop_after_motion",
+        ])
+        self.assertEqual([payload["action"] for _, payload in messages], [
+            "stop",
+            "move_forward",
+            "stop",
+        ])
+        self.assertTrue(all(topic == "safeground/robots/go2/commands" for topic, _ in messages))
+
+    def test_camera_object_mark_updates_latest_report(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                service = OrchestratorService(self.config(tmpdir))
+                await service.start_mission("FIELD")
+                report = await service.mark_latest_object(
+                    ObjectMarkRequest(
+                        label=ClassificationLabel.NOT_MINE,
+                        operator_id="operator",
+                    ),
+                )
+                return report, service.events(limit=None)
+
+        report, events = asyncio.run(_run())
+
+        self.assertIsNotNone(report.classification)
+        self.assertEqual(report.classification.label, ClassificationLabel.NOT_MINE)
+        self.assertTrue(report.safe_to_contact)
+        self.assertIsNotNone(report.finding)
+        self.assertEqual(report.finding.label, ClassificationLabel.NOT_MINE)
+        self.assertIn(EventType.OBJECT_MARKED, [event.event_type for event in events])
+
     def test_manual_so101_takeover_executes_bounded_nudge(self) -> None:
         async def _run():
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -345,15 +462,48 @@ class SafeGroundP0Tests(unittest.TestCase):
 
         self.assertIn(EventType.SAFETY_CHECK_FAILED, [event.event_type for event in events])
 
+    def test_go2_scout_route_plan_records_point_map(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                service = OrchestratorService(self.config(tmpdir))
+                result = await service.plan_scout_route(
+                    ScoutRouteCommand(
+                        operator_confirmed=True,
+                        waypoints=[
+                            MapPoint(x=0.1, y=0.8),
+                            MapPoint(x=0.4, y=0.5),
+                            MapPoint(x=0.8, y=0.2),
+                        ],
+                    )
+                )
+                snapshot = await service.snapshot()
+                return result, snapshot, service.events(limit=None)
+
+        result, snapshot, events = asyncio.run(_run())
+
+        self.assertTrue(result.accepted)
+        self.assertTrue(result.dry_run)
+        self.assertEqual(result.robot_id, "go2")
+        self.assertEqual(len(result.waypoints), 3)
+        self.assertTrue(result.obstacles)
+        self.assertEqual(snapshot.scout_route, result)
+        event_types = [event.event_type for event in events]
+        self.assertIn(EventType.SCOUT_ROUTE_PLANNED, event_types)
+        self.assertIn(EventType.POINT_MAP_UPDATED, event_types)
+
     def test_fastapi_app_imports_with_registered_routes(self) -> None:
         from safeground.api.server import app
 
         paths = {route.path for route in app.routes}
 
         self.assertIn("/api/missions/start", paths)
+        self.assertIn("/api/runtime", paths)
+        self.assertIn("/api/observations/mark", paths)
         self.assertIn("/api/robots", paths)
         self.assertIn("/api/robots/{robot_id}/manual-arm", paths)
         self.assertIn("/api/robots/{robot_id}/move", paths)
+        self.assertIn("/api/robots/go2/route-plan", paths)
+        self.assertIn("/api/camera-streams", paths)
         self.assertIn("/ws/events", paths)
 
 

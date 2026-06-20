@@ -1,15 +1,12 @@
 <script setup lang="ts">
+import CollapsiblePanel from "./CollapsiblePanel.vue";
 import type { RobotStatus } from "../types";
 
 defineProps<{ robots: RobotStatus[] }>();
 </script>
 
 <template>
-  <section class="panel">
-    <div class="panel-title">
-      <span>Fleet</span>
-      <small>{{ robots.length }} entities</small>
-    </div>
+  <CollapsiblePanel title="Fleet" :meta="`${robots.length} entities`">
     <article v-for="robot in robots" :key="robot.robot_id" class="robot-card">
       <div class="robot-card__top">
         <strong>{{ robot.robot_id }}</strong>
@@ -25,5 +22,5 @@ defineProps<{ robots: RobotStatus[] }>();
         <span v-for="sensor in robot.sensors" :key="sensor">{{ sensor }}</span>
       </div>
     </article>
-  </section>
+  </CollapsiblePanel>
 </template>

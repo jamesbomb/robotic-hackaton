@@ -19,6 +19,7 @@ Offline:
 - `docs/robot-sensors-research.md`
 - `docs/physical_setup_activities.md`
 - `docs/commands.md`
+- `docs/robot_movement_capability_map.md`
 
 Online:
 
@@ -90,6 +91,8 @@ Regole SafeGround:
 - Usare `cw.affect("simulation")` per prove iniziali.
 - Usare `cw.affect("live")` solo con operatore presente.
 - Validare `stop`, frame capture e health prima di locomozione o giunti.
+- Dalla console SafeGround usare `Safety -> Runtime` per passare da `mock` a `simulation` o `live`; disattivare `dry_run` solo per smoke test supervisionati.
+- In `live + dry_run=false`, i micro-movimenti base SafeGround vengono inviati via MQTT al controller policy: `safeground/robots/{robot_id}/commands` per default, da validare onsite.
 - Non inviare comandi motore raw da LLM.
 - Registrare `twin_id`, `environment_id`, `sensor_id`, driver attivo e comando di pairing riuscito.
 
@@ -372,3 +375,7 @@ Per il demo:
 - Go2 e UGV devono usare route sicure registrate per le seconde verifiche.
 - SO-101 resta marker agent P2 e non partecipa alla locomozione safe-route.
 - Qualsiasi comando live passa da allow-list, timeout, stop e human override.
+
+Per la mappatura completa dei movimenti possibili, distinguendo P0 safe,
+Cyberwave live da cablare e azioni vietate, vedere
+`docs/robot_movement_capability_map.md`.

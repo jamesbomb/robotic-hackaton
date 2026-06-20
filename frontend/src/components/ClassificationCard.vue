@@ -1,15 +1,12 @@
 <script setup lang="ts">
+import CollapsiblePanel from "./CollapsiblePanel.vue";
 import type { MissionReport } from "../types";
 
 defineProps<{ report: MissionReport | null }>();
 </script>
 
 <template>
-  <section class="panel">
-    <div class="panel-title">
-      <span>Decision</span>
-      <small>{{ report?.recommendation ?? "waiting" }}</small>
-    </div>
+  <CollapsiblePanel title="Decision" :meta="report?.recommendation ?? 'waiting'">
     <template v-if="report?.classification">
       <div :class="['classification', report.classification.label.toLowerCase()]">
         {{ report.classification.label }}
@@ -24,5 +21,5 @@ defineProps<{ report: MissionReport | null }>();
       </ul>
     </template>
     <p v-else class="subtle">No active classification. Start a mission or send a command.</p>
-  </section>
+  </CollapsiblePanel>
 </template>

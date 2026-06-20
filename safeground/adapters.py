@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
+from safeground.mqtt_bridge import MqttPublisher, PahoMqttPublisher
 from safeground.models import (
     BaseMovementAction,
     BaseMovementCommand,
@@ -58,6 +59,7 @@ class MockRobotAdapter:
         battery_percent: int | None = 100,
         task: str = "idle",
         note: str | None = None,
+        mqtt_publisher: MqttPublisher | None = None,
     ) -> None:
         self.id = robot_id or config.robot_id
         self.role = role or config.robot_role
@@ -76,14 +78,25 @@ class MockRobotAdapter:
         self.battery_percent = battery_percent
         self.task = task
         self.note = note or "No hardware commands are sent by the mock adapter."
+        self.runtime_mode = config.runtime_mode
+        self.dry_run = config.dry_run
+        self.mqtt_topic_prefix = config.mqtt_topic_prefix
+        self.mqtt_publisher = mqtt_publisher or PahoMqttPublisher(
+            host=config.mqtt_host,
+            port=config.mqtt_port,
+            qos=config.mqtt_qos,
+            timeout_s=config.mqtt_timeout_s,
+            client_id=f"safeground-{self.id}",
+        )
         self.frame_fixture_dir = config.frame_fixture_dir
         self.output_frame_dir = Path("safeground_runs/frames")
 
     async def health(self) -> dict:
         return {
             "online": True,
-            "mode": "mock",
-            "dry_run_safe": True,
+            "mode": self.runtime_mode,
+            "adapter": "mock",
+            "dry_run_safe": self.dry_run,
             "note": self.note,
         }
 
@@ -99,7 +112,7 @@ class MockRobotAdapter:
             robot_id=self.id,
             role=self.role,
             online=True,
-            mode=RuntimeMode.MOCK,
+            mode=self.runtime_mode,
             task=self.task,
             battery_percent=self.battery_percent,
             sensors=self.sensors,
@@ -146,6 +159,20 @@ class MockRobotAdapter:
 
         self.task = "manual_base_movement"
         sequence = ["stop_before_motion", command.action.value, "stop_after_motion"]
+        if self.runtime_mode == RuntimeMode.LIVE and not self.dry_run:
+            self._publish_live_base_sequence(command, sequence)
+            return BaseMovementResult(
+                robot_id=self.id,
+                action=command.action,
+                applied=True,
+                dry_run=False,
+                pose=self.pose,
+                executed_sequence=[
+                    f"mqtt_publish:{step}" for step in sequence
+                ],
+                reason=f"{command.reason} Published to MQTT controller policy topic.",
+            )
+
         if command.action == BaseMovementAction.MOVE_FORWARD:
             self.pose.x += command.distance_m * math.cos(self.pose.yaw)
             self.pose.y += command.distance_m * math.sin(self.pose.yaw)
@@ -166,6 +193,30 @@ class MockRobotAdapter:
             executed_sequence=sequence,
             reason=command.reason,
         )
+
+    def _publish_live_base_sequence(
+        self,
+        command: BaseMovementCommand,
+        sequence: list[str],
+    ) -> None:
+        topic = f"{self.mqtt_topic_prefix}/{self.id}/commands"
+        for step in sequence:
+            action = "stop" if step in {"stop_before_motion", "stop_after_motion"} else command.action.value
+            self.mqtt_publisher.publish(
+                topic,
+                {
+                    "source": "safeground",
+                    "robot_id": self.id,
+                    "runtime_mode": self.runtime_mode,
+                    "dry_run": False,
+                    "sequence_step": step,
+                    "action": action,
+                    "distance_m": command.distance_m,
+                    "angle_degrees": command.angle_degrees,
+                    "operator_id": command.operator_id,
+                    "reason": command.reason,
+                },
+            )
 
     async def execute_manual_arm_command(self, command: ManualArmCommand) -> ManualArmResult:
         return ManualArmResult(

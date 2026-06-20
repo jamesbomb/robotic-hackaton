@@ -88,14 +88,18 @@ class EventType(StrEnum):
     SAFETY_CHECK_FAILED = "SAFETY_CHECK_FAILED"
     MISSION_REPORTED = "MISSION_REPORTED"
     MISSION_STOPPED = "MISSION_STOPPED"
+    RUNTIME_CONFIG_UPDATED = "RUNTIME_CONFIG_UPDATED"
     MANUAL_ARM_COMMAND_REQUESTED = "MANUAL_ARM_COMMAND_REQUESTED"
     MANUAL_ARM_COMMAND_APPLIED = "MANUAL_ARM_COMMAND_APPLIED"
     BASE_MOVEMENT_COMMAND_REQUESTED = "BASE_MOVEMENT_COMMAND_REQUESTED"
     BASE_MOVEMENT_COMMAND_APPLIED = "BASE_MOVEMENT_COMMAND_APPLIED"
+    SCOUT_ROUTE_PLANNED = "SCOUT_ROUTE_PLANNED"
+    POINT_MAP_UPDATED = "POINT_MAP_UPDATED"
     ROUTE_RECORDED = "ROUTE_RECORDED"
     ROUTE_INVALIDATED = "ROUTE_INVALIDATED"
     ROUTE_REUSED_FOR_VERIFICATION = "ROUTE_REUSED_FOR_VERIFICATION"
     OBSERVATION_RECORDED = "OBSERVATION_RECORDED"
+    OBJECT_MARKED = "OBJECT_MARKED"
     CONSENSUS_REACHED = "CONSENSUS_REACHED"
     ERROR = "ERROR"
 
@@ -141,6 +145,11 @@ class SafeGroundConfig(BaseModel):
     low_confidence_threshold: float = Field(default=0.4, ge=0.0, le=1.0)
     verification_scenario: str = "MINE"
     route_over_mine: bool = False
+    mqtt_host: str = "localhost"
+    mqtt_port: int = Field(default=1883, gt=0, le=65535)
+    mqtt_topic_prefix: str = "safeground/robots"
+    mqtt_qos: int = Field(default=1, ge=0, le=2)
+    mqtt_timeout_s: float = Field(default=2.0, gt=0.0)
 
 
 class RobotPose(BaseModel):
@@ -171,6 +180,27 @@ class CommandRequest(BaseModel):
     text: str | None = None
     scenario: str = "FIELD"
     target_sector: str | None = None
+
+
+class RuntimeConfigRequest(BaseModel):
+    runtime_mode: RuntimeMode = RuntimeMode.MOCK
+    dry_run: bool = True
+    operator_id: str = "operator"
+    operator_confirmed: bool = False
+    reason: str = "Operator runtime mode change."
+
+
+class RuntimeStatus(BaseModel):
+    runtime_mode: RuntimeMode
+    dry_run: bool
+    live_adapter_ready: bool = False
+    note: str = "Mock adapters are active; no hardware commands are sent."
+
+
+class ObjectMarkRequest(BaseModel):
+    label: ClassificationLabel
+    operator_id: str = "operator"
+    reason: str = "Operator marked object from camera panel."
 
 
 class ManualArmCommand(BaseModel):
@@ -234,6 +264,46 @@ class BaseMovementResult(BaseModel):
     pose: RobotPose
     executed_sequence: list[str] = Field(default_factory=list)
     reason: str
+
+
+class MapPoint(BaseModel):
+    x: float = Field(ge=0.0, le=1.0)
+    y: float = Field(ge=0.0, le=1.0)
+
+
+class MapObstacle(BaseModel):
+    obstacle_id: str = Field(default_factory=lambda: f"obstacle-{uuid4().hex[:8]}")
+    label: str
+    position: MapPoint
+    radius: float = Field(default=0.05, gt=0.0, le=0.25)
+    source: str = "mock"
+
+
+class ScoutRouteCommand(BaseModel):
+    robot_id: str = "go2"
+    operator_id: str = "operator"
+    operator_confirmed: bool = False
+    waypoints: list[MapPoint] = Field(min_length=2, max_length=12)
+    reason: str = "Operator-drawn scout route."
+
+
+class ScoutRouteResult(BaseModel):
+    route_id: str = Field(default_factory=lambda: f"scout-route-{uuid4().hex[:8]}")
+    robot_id: str
+    accepted: bool
+    dry_run: bool
+    waypoints: list[MapPoint]
+    point_map: list[MapPoint]
+    obstacles: list[MapObstacle] = Field(default_factory=list)
+    reason: str
+
+
+class CameraStream(BaseModel):
+    twin_id: str
+    robot_id: str
+    source_url: str
+    browser_url: str
+    status: str = "configured"
 
 
 class Observation(BaseModel):
@@ -368,6 +438,9 @@ class MissionReport(BaseModel):
 
 class MissionSnapshot(BaseModel):
     mission: Mission | None = None
+    runtime: RuntimeStatus
     report: MissionReport | None = None
     robots: list[RobotStatus] = Field(default_factory=list)
     events: list[dict[str, Any]] = Field(default_factory=list)
+    camera_streams: list[CameraStream] = Field(default_factory=list)
+    scout_route: ScoutRouteResult | None = None

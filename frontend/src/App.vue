@@ -3,21 +3,30 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import {
   connectEvents,
   getSnapshot,
+  markLatestObject,
   sendBaseMovementCommand,
   sendCommand,
   sendManualArmCommand,
+  sendScoutRoutePlan,
   startMission,
   stopMission,
+  updateRuntime,
 } from "./api";
 import type {
   BaseMovementCommandRequest,
   BaseMovementResult,
+  CameraStream,
+  ClassificationLabel,
   EventRecord,
   ManualArmCommandRequest,
   ManualArmResult,
+  MapPoint,
   MissionReport,
   MissionSnapshot,
   RobotStatus,
+  RuntimeConfigRequest,
+  RuntimeStatus,
+  ScoutRouteResult,
 } from "./types";
 import BaseMovementPanel from "./components/BaseMovementPanel.vue";
 import CameraPanel from "./components/CameraPanel.vue";
@@ -29,11 +38,15 @@ import MissionHeader from "./components/MissionHeader.vue";
 import RiskMap from "./components/RiskMap.vue";
 import RobotFleetPanel from "./components/RobotFleetPanel.vue";
 import SafetyControls from "./components/SafetyControls.vue";
+import ScoutPathPlanner from "./components/ScoutPathPlanner.vue";
 
 const snapshot = ref<MissionSnapshot | null>(null);
 const report = ref<MissionReport | null>(null);
 const robots = ref<RobotStatus[]>([]);
 const events = ref<EventRecord[]>([]);
+const cameraStreams = ref<CameraStream[]>([]);
+const scoutRoute = ref<ScoutRouteResult | null>(null);
+const runtimeStatus = ref<RuntimeStatus | null>(null);
 const manualArmResult = ref<ManualArmResult | null>(null);
 const baseMovementResult = ref<BaseMovementResult | null>(null);
 const busy = ref(false);
@@ -41,8 +54,10 @@ const error = ref<string | null>(null);
 let socket: WebSocket | null = null;
 
 const missionState = computed(() => snapshot.value?.mission?.state ?? report.value?.state ?? "IDLE");
-const runtimeMode = computed(() => snapshot.value?.mission?.runtime_mode ?? "mock");
-const dryRun = computed(() => snapshot.value?.mission?.dry_run ?? true);
+const runtimeMode = computed(() => runtimeStatus.value?.runtime_mode ?? "mock");
+const dryRun = computed(() => runtimeStatus.value?.dry_run ?? true);
+const liveAdapterReady = computed(() => runtimeStatus.value?.live_adapter_ready ?? false);
+const runtimeNote = computed(() => runtimeStatus.value?.note ?? "Runtime status unavailable.");
 const observations = computed(() => report.value?.observations ?? []);
 const latestObservation = computed(() => observations.value.at(-1) ?? null);
 const finding = computed(() => report.value?.finding ?? null);
@@ -53,6 +68,9 @@ async function refresh() {
   report.value = snapshot.value.report;
   robots.value = snapshot.value.robots;
   events.value = snapshot.value.events;
+  cameraStreams.value = snapshot.value.camera_streams;
+  scoutRoute.value = snapshot.value.scout_route;
+  runtimeStatus.value = snapshot.value.runtime;
 }
 
 async function runAction(action: () => Promise<MissionReport>) {
@@ -94,6 +112,47 @@ async function runBaseMovement(robotId: string, command: BaseMovementCommandRequ
   }
 }
 
+async function runRuntimeChange(command: RuntimeConfigRequest) {
+  busy.value = true;
+  error.value = null;
+  try {
+    runtimeStatus.value = await updateRuntime(command);
+    await refresh();
+  } catch (caught) {
+    error.value = caught instanceof Error ? caught.message : "Unknown error";
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function markCameraObject(label: ClassificationLabel) {
+  await runAction(() =>
+    markLatestObject({
+      label,
+      operator_id: "operator",
+      reason: "Operator marked object from camera panel.",
+    }),
+  );
+}
+
+async function planScoutRoute(waypoints: MapPoint[]) {
+  busy.value = true;
+  error.value = null;
+  try {
+    scoutRoute.value = await sendScoutRoutePlan({
+      robot_id: "go2",
+      operator_confirmed: true,
+      waypoints,
+      reason: "Operator planned scout path from dashboard map.",
+    });
+    await refresh();
+  } catch (caught) {
+    error.value = caught instanceof Error ? caught.message : "Unknown error";
+  } finally {
+    busy.value = false;
+  }
+}
+
 function onEvent(event: EventRecord) {
   events.value = [...events.value, event].slice(-200);
 }
@@ -124,7 +183,15 @@ onUnmounted(() => {
     <div class="console-grid">
       <aside class="left-rail">
         <RobotFleetPanel :robots="robots" />
-        <SafetyControls :dry-run="dryRun" :runtime-mode="runtimeMode" @stop="() => runAction(stopMission)" />
+        <SafetyControls
+          :dry-run="dryRun"
+          :runtime-mode="runtimeMode"
+          :live-adapter-ready="liveAdapterReady"
+          :runtime-note="runtimeNote"
+          :busy="busy"
+          @runtime-change="(command) => runRuntimeChange(command)"
+          @stop="() => runAction(stopMission)"
+        />
         <BaseMovementPanel
           :robots="robots"
           :busy="busy"
@@ -147,7 +214,12 @@ onUnmounted(() => {
 
       <section class="center-stage">
         <RiskMap :robots="robots" :observations="observations" :finding="finding" />
-        <CameraPanel :observation="latestObservation" />
+        <ScoutPathPlanner :busy="busy" :route="scoutRoute" @plan="planScoutRoute" />
+        <CameraPanel
+          :observation="latestObservation"
+          :streams="cameraStreams"
+          @mark="(label) => markCameraObject(label)"
+        />
       </section>
 
       <aside class="right-rail">

@@ -77,6 +77,57 @@ select {
   padding: 1rem;
 }
 
+.collapsible-panel {
+  padding: 0;
+  overflow: hidden;
+}
+
+.collapsible-trigger {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  border: 0;
+  border-radius: 18px;
+  padding: 1rem;
+  color: #b9d6cb;
+  background: transparent;
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.78rem;
+}
+
+.collapsible-trigger:hover {
+  border-color: transparent;
+  background: rgba(122, 255, 190, 0.06);
+}
+
+.collapsible-meta {
+  display: inline-flex;
+  gap: 0.6rem;
+  align-items: center;
+  color: #8aa39a;
+}
+
+.chevron {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform 160ms ease;
+}
+
+.chevron.open {
+  transform: rotate(225deg);
+}
+
+.collapsible-body {
+  padding: 0 1rem 1rem;
+}
+
 .mission-header {
   display: grid;
   grid-template-columns: 1.4fr auto 1.5fr;
@@ -253,6 +304,37 @@ small {
   background: rgba(2, 6, 10, 0.35);
 }
 
+.live-stream-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.7rem;
+  margin-bottom: 0.85rem;
+}
+
+.live-stream-card {
+  display: grid;
+  gap: 0.45rem;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 14px;
+  padding: 0.7rem;
+  background: rgba(2, 6, 10, 0.35);
+}
+
+.live-stream-card div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.live-stream-card img {
+  width: 100%;
+  min-height: 120px;
+  object-fit: cover;
+  border: 1px solid rgba(122, 255, 190, 0.18);
+  border-radius: 10px;
+  background: #02060a;
+}
+
 .frame-stage {
   display: grid;
   place-items: center;
@@ -271,6 +353,36 @@ small {
   place-items: center;
   border: 2px solid rgba(250, 204, 21, 0.9);
   color: #fef3c7;
+}
+
+.camera-mark-controls {
+  display: grid;
+  grid-template-columns: 1fr repeat(3, auto);
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0.8rem 0;
+}
+
+.camera-mark-controls span {
+  color: #8aa39a;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.72rem;
+}
+
+button.mark-mine {
+  border-color: rgba(248, 113, 113, 0.65);
+  background: rgba(127, 29, 29, 0.45);
+}
+
+button.mark-not-mine {
+  border-color: rgba(52, 211, 153, 0.65);
+  background: rgba(20, 83, 45, 0.45);
+}
+
+button.mark-uncertain {
+  border-color: rgba(250, 204, 21, 0.65);
+  background: rgba(113, 63, 18, 0.45);
 }
 
 .data-list div,
@@ -338,6 +450,57 @@ small {
   gap: 0.7rem;
 }
 
+.scout-route-panel {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.route-canvas {
+  width: 100%;
+  min-height: 320px;
+  border: 1px solid rgba(122, 255, 190, 0.18);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at center, rgba(20, 184, 166, 0.12), transparent 18rem),
+    rgba(2, 6, 10, 0.42);
+}
+
+.draft-route,
+.accepted-route {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.draft-route {
+  stroke: rgba(250, 204, 21, 0.9);
+  stroke-width: 1.2;
+  stroke-dasharray: 2 2;
+}
+
+.accepted-route {
+  stroke: rgba(52, 211, 153, 0.9);
+  stroke-width: 1.6;
+}
+
+.route-waypoint {
+  fill: #facc15;
+  stroke: #02060a;
+  stroke-width: 0.8;
+}
+
+.route-obstacle {
+  fill: rgba(248, 113, 113, 0.42);
+  stroke: rgba(248, 113, 113, 0.95);
+  stroke-width: 0.8;
+}
+
+.route-actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.6rem;
+}
+
 .manual-arm-panel p,
 .base-movement-panel p {
   margin: 0;
@@ -378,6 +541,27 @@ small {
   display: grid;
   grid-template-columns: 1fr auto;
   margin: 0.8rem 0;
+}
+
+.runtime-controls {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0.8rem 0;
+}
+
+.runtime-controls label {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.runtime-controls .inline-check {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.runtime-controls input[type="checkbox"] {
+  width: auto;
 }
 
 .error-banner {

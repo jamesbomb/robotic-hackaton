@@ -5,7 +5,14 @@ from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from safeground.models import BaseMovementCommand, CommandRequest, ManualArmCommand
+from safeground.models import (
+    BaseMovementCommand,
+    CommandRequest,
+    ManualArmCommand,
+    ObjectMarkRequest,
+    RuntimeConfigRequest,
+    ScoutRouteCommand,
+)
 from safeground.services.orchestrator_service import OrchestratorService
 
 
@@ -34,6 +41,19 @@ async def health() -> dict:
     }
 
 
+@app.get("/api/runtime")
+async def runtime():
+    return service.runtime_status()
+
+
+@app.post("/api/runtime")
+async def update_runtime(request: RuntimeConfigRequest):
+    try:
+        return await service.update_runtime(request)
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.get("/api/snapshot")
 async def snapshot():
     return await service.snapshot()
@@ -59,9 +79,22 @@ async def run_command(request: CommandRequest):
     return await service.run_command(request)
 
 
+@app.post("/api/observations/mark")
+async def mark_latest_object(request: ObjectMarkRequest):
+    try:
+        return await service.mark_latest_object(request)
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.get("/api/robots")
 async def robots():
     return await service.robot_statuses()
+
+
+@app.get("/api/camera-streams")
+async def camera_streams():
+    return service.camera_streams()
 
 
 @app.get("/api/robots/{robot_id}/capabilities")
@@ -92,6 +125,14 @@ async def move_robot_base(robot_id: str, request: BaseMovementCommand):
         raise HTTPException(status_code=404, detail="Robot not found")
     try:
         return await service.move_robot_base(robot_id, request)
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/robots/go2/route-plan")
+async def plan_go2_route(request: ScoutRouteCommand):
+    try:
+        return await service.plan_scout_route(request)
     except PermissionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

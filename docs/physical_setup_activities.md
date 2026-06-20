@@ -124,7 +124,8 @@ P0 use:
 
 - Camera or robot card status only.
 - Optional stationary frame capture.
-- No required movement.
+- Base movement contract in mock/simulation.
+- At most one supervised live micro-movement after stop, health and frame checks pass.
 
 ### UGV Beast
 
@@ -141,6 +142,7 @@ P0 use:
 
 - Stationary camera capture or robot card status.
 - Optional pan/tilt only if bounded and supervised.
+- Base movement contract in mock/simulation; live movement only as supervised smoke test.
 
 ### SO101
 

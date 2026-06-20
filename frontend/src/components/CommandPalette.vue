@@ -5,7 +5,7 @@ const emit = defineEmits<{
   command: [text: string, scenario: string];
 }>();
 
-const text = ref("ispeziona il campo con lattine arancioni nere e verdi");
+const text = ref("ispeziona il campo in cerca di mine");
 const scenario = ref("FIELD");
 
 function submit() {

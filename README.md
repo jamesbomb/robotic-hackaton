@@ -36,7 +36,7 @@ Chat commands are interpreted into safe structured intents before they reach the
 mission runner. Stop commands bypass planning and call the deterministic stop path.
 
 ```bash
-.venv/bin/python -m safeground.cli --command "ispeziona il campo con lattine arancioni nere e verdi" --print-events
+.venv/bin/python -m safeground.cli --command "ispeziona il campo in cerca di mine" --print-events
 .venv/bin/python -m safeground.cli --command "ferma tutto"
 ```
 
@@ -64,6 +64,16 @@ Mobile robots expose bounded base movement in mock/simulation P0:
 `POST /api/robots/go2/move` or the dashboard panel. Each command requires
 `operator_confirmed=true`, is wrapped by stop-before/stop-after sequencing, and
 is capped at 0.5 m or 15 degrees.
+
+The full movement capability map for Go2, UGV Beast, and SO-101 is documented
+in `docs/robot_movement_capability_map.md`.
+
+## Runtime Switching
+
+Use the dashboard `Safety` panel or `POST /api/runtime` to switch between
+`mock`, `simulation`, and `live`, and to toggle `dry_run`. Live non-dry-run
+requires `operator_confirmed=true` and is audited. Current Python adapters are
+still mock-safe until Cyberwave live adapters are wired.
 
 The default event log is append-only JSONL at `safeground_runs/events.jsonl`.
 Captured mock frames are copied to `safeground_runs/frames/`.

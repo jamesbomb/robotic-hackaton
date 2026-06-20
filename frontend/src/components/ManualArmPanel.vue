@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import CollapsiblePanel from "./CollapsiblePanel.vue";
 import type { ManualArmAction, ManualArmCommandRequest, RobotStatus } from "../types";
 
 const props = defineProps<{ robot: RobotStatus | null; busy: boolean }>();
@@ -39,12 +40,11 @@ function send(action: ManualArmAction) {
 </script>
 
 <template>
-  <section class="panel manual-arm-panel">
-    <div class="panel-title">
-      <span>SO-101 Takeover</span>
-      <small>{{ robot?.task ?? "offline" }}</small>
-    </div>
-
+  <CollapsiblePanel
+    title="SO-101 Takeover"
+    :meta="robot?.task ?? 'offline'"
+    panel-class="manual-arm-panel"
+  >
     <p>
       Human operator controls are bounded and audited. Marker placement is only sent as a
       prevalidated safe preset for <code>NOT_MINE</code> targets.
@@ -83,5 +83,5 @@ function send(action: ManualArmAction) {
         Nudge Joint
       </button>
     </div>
-  </section>
+  </CollapsiblePanel>
 </template>

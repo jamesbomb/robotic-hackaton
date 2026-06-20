@@ -235,6 +235,8 @@ All’avvio il backend deve produrre una capability map reale:
 ```
 
 La capability map deve essere costruita dal sistema reale, non hardcoded, quando possibile.
+La mappa offline completa dei movimenti noti e delle decisioni safety e' in
+`docs/robot_movement_capability_map.md`.
 
 ---
 
@@ -534,6 +536,14 @@ Per ogni robot:
 - nessun comando raw libero verso i giunti;
 - risultato comando e safety check visibili nella timeline.
 
+#### Runtime control
+
+- pannello `Safety` con selettore `mock`, `simulation`, `live`;
+- toggle `dry_run` modificabile dall'operatore;
+- passaggio a `live` senza dry-run consentito solo con conferma operatore;
+- stato `live_adapter_ready` visibile per distinguere configurazione runtime da adapter hardware realmente cablato;
+- ogni cambio runtime emette evento `RUNTIME_CONFIG_UPDATED`.
+
 #### Camera panel
 
 - feed Go2;
@@ -542,6 +552,7 @@ Per ogni robot:
 - bounding box;
 - label;
 - confidence;
+- flag manuali `mine`, `not_mine`, `uncertain` dal pannello camera;
 - pulsante `Request second opinion`.
 
 #### Risk map

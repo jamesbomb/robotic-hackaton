@@ -1,12 +1,18 @@
 import type {
   BaseMovementCommandRequest,
   BaseMovementResult,
+  CameraStream,
   EventRecord,
   ManualArmCommandRequest,
   ManualArmResult,
   MissionReport,
+  ObjectMarkRequest,
   MissionSnapshot,
   RobotStatus,
+  RuntimeConfigRequest,
+  RuntimeStatus,
+  ScoutRouteCommandRequest,
+  ScoutRouteResult,
 } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -15,7 +21,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`);
+    const body = await response.json().catch(() => null);
+    const detail = typeof body?.detail === "string" ? body.detail : response.statusText;
+    throw new Error(`${response.status} ${detail}`);
   }
   return response.json() as Promise<T>;
 }
@@ -24,8 +32,23 @@ export function getSnapshot() {
   return request<MissionSnapshot>("/api/snapshot");
 }
 
+export function getRuntime() {
+  return request<RuntimeStatus>("/api/runtime");
+}
+
+export function updateRuntime(command: RuntimeConfigRequest) {
+  return request<RuntimeStatus>("/api/runtime", {
+    method: "POST",
+    body: JSON.stringify(command),
+  });
+}
+
 export function getRobots() {
   return request<RobotStatus[]>("/api/robots");
+}
+
+export function getCameraStreams() {
+  return request<CameraStream[]>("/api/camera-streams");
 }
 
 export function getEvents() {
@@ -50,6 +73,13 @@ export function sendCommand(text: string, scenario: string) {
   });
 }
 
+export function markLatestObject(command: ObjectMarkRequest) {
+  return request<MissionReport>("/api/observations/mark", {
+    method: "POST",
+    body: JSON.stringify(command),
+  });
+}
+
 export function sendManualArmCommand(robotId: string, command: ManualArmCommandRequest) {
   return request<ManualArmResult>(`/api/robots/${robotId}/manual-arm`, {
     method: "POST",
@@ -59,6 +89,13 @@ export function sendManualArmCommand(robotId: string, command: ManualArmCommandR
 
 export function sendBaseMovementCommand(robotId: string, command: BaseMovementCommandRequest) {
   return request<BaseMovementResult>(`/api/robots/${robotId}/move`, {
+    method: "POST",
+    body: JSON.stringify(command),
+  });
+}
+
+export function sendScoutRoutePlan(command: ScoutRouteCommandRequest) {
+  return request<ScoutRouteResult>("/api/robots/go2/route-plan", {
     method: "POST",
     body: JSON.stringify(command),
   });

@@ -88,7 +88,7 @@ Nel campo unico `FIELD`, la lattina nera produce il caso `UNCERTAIN`; il robot d
 
 ```bash
 .venv/bin/python -m safeground.cli \
-  --command "ispeziona il campo con lattine arancioni nere e verdi" \
+  --command "ispeziona il campo in cerca di mine" \
   --print-events
 ```
 
@@ -144,6 +144,9 @@ Questa sequenza prepara insieme:
 - controlli Web UI per start/stop, command palette, movement bounded e SO-101 manual takeover;
 - test automatici e build frontend.
 
+La mappa completa dei movimenti disponibili per Go2, UGV Beast e SO-101 e'
+in `docs/robot_movement_capability_map.md`.
+
 ## Avvio Web UI
 
 Terminale 1, backend FastAPI:
@@ -171,16 +174,86 @@ Flusso Web UI consigliato:
 2. Premere `Start Field Scan`.
 3. Controllare che timeline e pannelli mostrino Go2, UGV Beast, SO-101 e camera fissa.
 4. Verificare `ROUTE_RECORDED`, `ROUTE_REUSED_FOR_VERIFICATION` e `CONSENSUS_REACHED`.
-5. Usare `Command Palette` con: `ispeziona il campo con lattine arancioni nere e verdi`.
-6. Premere `Stop All` per dimostrare override umano.
-7. Usare i pannelli manuali solo in dry-run: micro-movimento bounded e SO-101 takeover.
+5. Dal pannello videocamera marcare il target con `Mine`, `Not mine` o `Uncertain` e verificare `OBJECT_MARKED` in timeline.
+6. Usare `Command Palette` con: `ispeziona il campo in cerca di mine`.
+7. Premere `Stop All` per dimostrare override umano.
+8. Usare `Safety -> Runtime` per passare tra `mock`, `simulation` e `live`.
+9. Disattivare `Dry run` solo dopo conferma operatore e check fisici.
+10. In `live + dry_run=false`, i micro-movimenti base pubblicano comandi MQTT `stop -> movimento -> stop`.
+11. Usare i pannelli manuali: micro-movimento bounded e SO-101 takeover.
+
+## Runtime Mock / Simulation / Live
+
+Il backend parte in modo sicuro con `mock + dry_run=true`:
+
+```bash
+.venv/bin/uvicorn safeground.api.server:app --reload
+```
+
+Dalla Web UI aprire il pannello `Safety`, scegliere:
+
+- `mock`: fixture e adapter mock;
+- `simulation`: stato runtime simulation, utile per cablare twin simulati;
+- `live`: stato runtime live, da usare solo con operatore presente.
+
+Per passare a live non dry-run via API:
+
+```bash
+curl -X POST http://localhost:8000/api/runtime \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "runtime_mode": "live",
+    "dry_run": false,
+    "operator_confirmed": true,
+    "reason": "supervised live smoke test"
+  }'
+```
+
+Nota safety: lo switch aggiorna configurazione, snapshot, robot card e audit log.
+
+### MQTT Movement Bridge
+
+Quando `runtime_mode=live` e `dry_run=false`, i comandi base dei robot mobili non restano mock: vengono pubblicati via MQTT al controller policy.
+
+Default backend:
+
+```text
+host: localhost
+port: 1883
+topic: safeground/robots/{robot_id}/commands
+qos: 1
+```
+
+Ogni micro-movimento pubblica tre messaggi:
+
+```text
+stop_before_motion -> move_forward/move_backward/rotate_left/rotate_right -> stop_after_motion
+```
+
+Payload essenziale:
+
+```json
+{
+  "source": "safeground",
+  "robot_id": "go2",
+  "runtime_mode": "live",
+  "dry_run": false,
+  "sequence_step": "move_forward",
+  "action": "move_forward",
+  "distance_m": 0.25,
+  "angle_degrees": 10,
+  "operator_id": "operator"
+}
+```
+
+Prima del live verificare broker, topic reale, controller policy/action list e comportamento dello stop sul robot fisico.
 
 ## Comandi Chat
 
 I comandi chat vengono interpretati in intenti strutturati prima di raggiungere la mission state machine.
 
 ```bash
-.venv/bin/python -m safeground.cli --command "ispeziona il campo con lattine arancioni nere e verdi"
+.venv/bin/python -m safeground.cli --command "ispeziona il campo in cerca di mine"
 ```
 
 Esempio con scenario unico esplicito:
@@ -301,7 +374,7 @@ npm run dev
 5. Dalla Web UI premere `Start Field Scan`, poi mostrare command palette o CLI:
 
 ```bash
-.venv/bin/python -m safeground.cli --command "ispeziona il campo con lattine arancioni nere e verdi" --print-events
+.venv/bin/python -m safeground.cli --command "ispeziona il campo in cerca di mine" --print-events
 ```
 
 6. Mostrare stop diretto:
@@ -316,6 +389,8 @@ npm run dev
 - Nessun comando chat o voce invia comandi motore raw.
 - Gli agenti producono intenti e decisioni strutturate.
 - Il `SafetyGovernor` applica allow-list e timeout prima degli adapter.
+- La lista completa dei movimenti possibili non coincide con la lista abilitata
+  in P0; vedere `docs/robot_movement_capability_map.md`.
 - Stop testuale/vocale deve restare il percorso piu' diretto possibile.
 - Oggetti `MINE` o `UNCERTAIN` non devono essere toccati.
 - Le route primarie sono riusabili dai robot di verifica solo se restano `SAFE`.

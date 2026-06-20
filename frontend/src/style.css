@@ -424,6 +424,107 @@ small {
   color: #9db4ac;
 }
 
+.live-feed-stage {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(122, 255, 190, 0.18);
+  border-radius: 14px;
+  background: #02060a;
+}
+
+.live-feed-stage video,
+.live-feed-stage img {
+  display: block;
+  width: 100%;
+  min-height: 260px;
+  object-fit: cover;
+}
+
+.live-feed-caption {
+  position: absolute;
+  left: 0.55rem;
+  bottom: 0.45rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 8px;
+  background: rgba(2, 6, 10, 0.72);
+  color: #9db4ac;
+}
+
+.live-detection-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid rgba(250, 204, 21, 0.92);
+  pointer-events: none;
+}
+
+.live-detection-box span {
+  position: absolute;
+  top: -1.35rem;
+  left: 0;
+  padding: 0.12rem 0.35rem;
+  border-radius: 6px;
+  background: rgba(2, 6, 10, 0.88);
+  color: #fef3c7;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.live-detection-box.mine {
+  border-color: rgba(248, 113, 113, 0.95);
+}
+
+.live-detection-box.mine span {
+  color: #fecaca;
+}
+
+.live-detection-box.not_mine {
+  border-color: rgba(52, 211, 153, 0.95);
+}
+
+.live-detection-box.not_mine span {
+  color: #bbf7d0;
+}
+
+.live-detection-box.uncertain {
+  border-color: rgba(250, 204, 21, 0.92);
+}
+
+.vlm-hud {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.hud-safe {
+  color: #6ee7b7;
+}
+
+.hud-danger {
+  color: #fca5a5;
+}
+
+.hud-avoid {
+  color: #fde68a;
+}
+
+.vlm-status {
+  color: #9db4ac;
+  font-size: 0.78rem;
+}
+
+.vlm-status-loading {
+  color: #a7f3d0;
+}
+
+.vlm-status-error {
+  color: #fecaca;
+}
+
 .snapshot-stage {
   min-height: 180px;
 }

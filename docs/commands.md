@@ -104,6 +104,49 @@ Comandi principali nella finestra:
 - `S`: salva calibrazione locale;
 - `q`: esce.
 
+### VLM del collega in locale (senza Colab)
+
+Il riconoscimento usa il codice in `live_vision/cw_vision.py` → modello hostato Cyberwave
+`google/models/gemini-robotics-er-16` con task `detect_boxes`. Non serve Colab.
+
+**Requisito:** `CYBERWAVE_API_KEY` in `.env` alla root del repo (oppure `live_vision/.cwkey`).
+
+Verifica che il VLM risponda:
+
+```bash
+PYTHONPATH=live_vision:. .venv/bin/python live_vision/verify_compat.py \
+  --img /path/to/foto_lattine.jpg
+```
+
+Smoke test sintetico (3 rettangoli verde/arancio/nero):
+
+```bash
+.venv/bin/python -c "
+import cv2, numpy as np; from pathlib import Path
+p = Path('safeground_runs/frames/vlm_smoke_test.jpg'); p.parent.mkdir(parents=True, exist_ok=True)
+img = np.ones((480,640,3), np.uint8)*40
+cv2.rectangle(img,(80,120),(160,320),(90,210,90),-1)
+cv2.rectangle(img,(280,120),(360,320),(40,160,240),-1)
+cv2.rectangle(img,(480,120),(560,320),(30,30,30),-1)
+cv2.imwrite(str(p), img); print('wrote', p)
+"
+PYTHONPATH=live_vision:. .venv/bin/python live_vision/verify_compat.py \
+  --img safeground_runs/frames/vlm_smoke_test.jpg
+```
+
+**Web UI:** pannello *Live Video + VLM* → attiva *Auto VLM 5s* o clic *Run VLM*.
+In modalità simulata usa la webcam PC; con robot fisico usa lo stream MJPEG del Go2.
+
+**API diretta (webcam / frame base64):**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/vision/classify-image \
+  -H 'Content-Type: application/json' \
+  -d "{\"image_base64\":\"$(base64 -i foto.jpg | tr -d '\\n')\"}" | python3 -m json.tool
+```
+
+Latenza tipica: ~5–8 s per frame (chiamata rete al VLM hostato).
+
 ## Safe Route E Seconda Verifica
 
 Ogni missione mock registra la traccia seguita dal robot primario come `route_trace` nel report e come evento `ROUTE_RECORDED` nel log.

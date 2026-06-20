@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import json
 import math
 import os
@@ -28,6 +29,7 @@ from safeground.models import (
     EventType,
     Finding,
     FrameRef,
+    ImageClassifyRequest,
     ManualArmCommand,
     ManualArmResult,
     MapObstacle,
@@ -315,17 +317,50 @@ class OrchestratorService:
             raise KeyError(robot_id)
 
         frame_bytes, media_type = await self.latest_robot_frame(robot_id)
+        return await self._classify_frame_bytes(
+            frame_bytes,
+            media_type=media_type,
+            robot_id=robot_id,
+            source=f"{robot_id}-camera",
+        )
+
+    async def classify_image(self, request: ImageClassifyRequest) -> dict:
+        payload = request.image_base64.strip()
+        if payload.startswith("data:") and "," in payload:
+            payload = payload.split(",", 1)[1]
+        try:
+            frame_bytes = base64.b64decode(payload)
+        except (ValueError, binascii.Error) as exc:
+            raise RuntimeError("Invalid base64 image payload.") from exc
+
+        media_type = self._image_media_type(frame_bytes)
+        return await self._classify_frame_bytes(
+            frame_bytes,
+            media_type=media_type,
+            robot_id=request.robot_id,
+            source=request.source,
+        )
+
+    async def _classify_frame_bytes(
+        self,
+        frame_bytes: bytes,
+        *,
+        media_type: str,
+        robot_id: str,
+        source: str,
+    ) -> dict:
+        validated = self._validate_frame_bytes(frame_bytes)
         output_dir = Path("safeground_runs/frames")
         output_dir.mkdir(parents=True, exist_ok=True)
         frame_id = f"{robot_id}-{uuid4().hex[:8]}"
         suffix = ".jpg" if media_type == "image/jpeg" else ".png"
         output_path = output_dir / f"{frame_id}{suffix}"
-        output_path.write_bytes(frame_bytes)
+        output_path.write_bytes(validated)
 
         frame_ref = FrameRef(
             frame_id=frame_id,
-            sensor_id=f"{robot_id}-camera",
-            source="cyberwave",
+            sensor_id=source,
+            source="cyberwave" if robot_id != "pc-camera" else "camera",
             path=output_path,
             metadata={"robot_id": robot_id},
         )
@@ -335,7 +370,7 @@ class OrchestratorService:
             "frame_id": frame_id,
             "robot_id": robot_id,
             "frame_media_type": media_type,
-            "frame_base64": base64.b64encode(frame_bytes).decode("ascii"),
+            "frame_base64": base64.b64encode(validated).decode("ascii"),
             "classification": classification.result.model_dump(mode="json"),
             "detections": raw_response.get("detections", []),
             "model_id": raw_response.get("model_id"),

@@ -44,6 +44,17 @@ export function classifyRobotFrame(robotId: string) {
   });
 }
 
+export function classifyImage(imageBase64: string, robotId = "pc-camera") {
+  return request<FrameClassificationResult>("/api/vision/classify-image", {
+    method: "POST",
+    body: JSON.stringify({
+      image_base64: imageBase64,
+      robot_id: robotId,
+      source: "pc-camera",
+    }),
+  });
+}
+
 export function getSnapshot() {
   return request<MissionSnapshot>("/api/snapshot");
 }

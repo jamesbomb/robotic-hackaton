@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from safeground.models import (
     BaseMovementCommand,
     CommandRequest,
+    ImageClassifyRequest,
     ManualArmCommand,
     MovementCommandRequest,
     ObjectMarkRequest,
@@ -225,6 +226,14 @@ async def classify_robot_frame(robot_id: str):
         return await service.classify_robot_frame(robot_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Robot not found") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/api/vision/classify-image")
+async def classify_image(request: ImageClassifyRequest):
+    try:
+        return await service.classify_image(request)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

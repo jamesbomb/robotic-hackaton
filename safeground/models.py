@@ -289,6 +289,12 @@ class ObjectMarkRequest(BaseModel):
     reason: str = "Operator marked object from camera panel."
 
 
+class ImageClassifyRequest(BaseModel):
+    image_base64: str
+    robot_id: str = "pc-camera"
+    source: str = "pc-camera"
+
+
 class ManualArmCommand(BaseModel):
     action: ManualArmAction
     operator_id: str = "operator"

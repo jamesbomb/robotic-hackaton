@@ -11,14 +11,36 @@ NOSTRO formato (stesso di vision.py) -> intercambiabile con la CV-colore.
   black  -> AVOID  (instabile -> traccia)
 """
 import base64, os, cv2
+from pathlib import Path
 from cyberwave import Cyberwave
 
 # key: il file .cwkey VINCE sull'env (cosi' una CYBERWAVE_API_KEY stale nell'env non rompe)
+def _load_repo_env() -> None:
+    if os.environ.get("CYBERWAVE_API_KEY"):
+        return
+    env_path = Path(__file__).resolve().parents[1] / ".env"
+    if not env_path.exists():
+        return
+    try:
+        from safeground.env import load_local_env
+
+        load_local_env(env_path)
+    except ImportError:
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
 def _api_key():
     f = os.path.join(os.path.dirname(__file__), ".cwkey")
     if os.path.exists(f):
         k = open(f).read().strip()
-        if k: return k
+        if k:
+            return k
+    _load_repo_env()
     return os.environ.get("CYBERWAVE_API_KEY")
 
 MODEL = "google/models/gemini-robotics-er-16"

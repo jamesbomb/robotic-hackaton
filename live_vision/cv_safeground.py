@@ -20,6 +20,7 @@ Mapping verso l'enum SafeGround (identico alla semantica del loro worker):
 """
 from __future__ import annotations
 
+import asyncio
 import cv2
 
 from safeground.cv import safe_uncertain
@@ -54,7 +55,7 @@ class CyberwaveVLMClient:
             )
 
         try:
-            dets = vlm_classify(img)
+            dets = await asyncio.to_thread(vlm_classify, img)
         except Exception as exc:  # rete/API giù -> fail-safe verso human review
             return safe_uncertain(
                 {"frame_path": str(frame.path), "error": str(exc)},

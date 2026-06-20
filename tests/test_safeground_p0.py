@@ -909,6 +909,7 @@ class SafeGroundP0Tests(unittest.TestCase):
         self.assertIn("/api/robots/go2/route-plan", paths)
         self.assertIn("/api/robots/{robot_id}/latest-frame", paths)
         self.assertIn("/api/robots/{robot_id}/classify-frame", paths)
+        self.assertIn("/api/vision/classify-image", paths)
         self.assertIn("/api/camera-streams", paths)
         self.assertIn("/api/object-pickup/sessions", paths)
         self.assertIn("/api/object-pickup/start", paths)

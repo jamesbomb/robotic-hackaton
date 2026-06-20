@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed } from "vue";
 import type { CameraSource, MovementTarget, RuntimeConfigRequest, RuntimeMode } from "../types";
 
 const props = defineProps<{
@@ -17,20 +17,7 @@ const emit = defineEmits<{
   runtimeChange: [command: RuntimeConfigRequest];
 }>();
 
-const simulationEnabled = ref(isSimulatedMode());
-
-watch(
-  () =>
-    [props.runtimeMode, props.dryRun, props.robotMovementTarget, props.cameraSource] as const,
-  ([runtimeMode, dryRun, robotMovementTarget, cameraSource]) => {
-    simulationEnabled.value = isSimulatedMode(
-      runtimeMode,
-      dryRun,
-      robotMovementTarget,
-      cameraSource,
-    );
-  },
-);
+const simulationEnabled = computed(() => isSimulatedMode());
 
 function isSimulatedMode(
   runtimeMode = props.runtimeMode,
@@ -44,6 +31,11 @@ function isSimulatedMode(
     cameraSource !== "robot" ||
     robotMovementTarget !== "physical"
   );
+}
+
+function onSimulationToggle(event: Event) {
+  const enabled = (event.target as HTMLInputElement).checked;
+  applySimulationSwitch(enabled);
 }
 
 function applySimulationSwitch(enabled: boolean) {
@@ -71,10 +63,10 @@ function applySimulationSwitch(enabled: boolean) {
       <label class="runtime-toggle simulation-switch header-simulation-switch">
         <span>Simulata</span>
         <input
-          v-model="simulationEnabled"
+          :checked="simulationEnabled"
           type="checkbox"
           :disabled="busy"
-          @change="applySimulationSwitch(simulationEnabled)"
+          @change="onSimulationToggle"
         />
         <span class="toggle-track"></span>
         <span class="simulation-switch-label">

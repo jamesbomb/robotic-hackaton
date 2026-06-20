@@ -219,6 +219,16 @@ async def latest_robot_frame(robot_id: str):
     )
 
 
+@app.post("/api/robots/{robot_id}/classify-frame")
+async def classify_robot_frame(robot_id: str):
+    try:
+        return await service.classify_robot_frame(robot_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Robot not found") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @app.get("/api/events")
 async def events(limit: int = 200):
     return service.events(limit=limit)

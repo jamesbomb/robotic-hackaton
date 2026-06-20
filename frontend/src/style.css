@@ -135,10 +135,34 @@ svg {
 
 .mission-header {
   display: grid;
-  grid-template-columns: 1.4fr auto 1.5fr;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
   gap: 1rem;
   align-items: center;
   margin-bottom: 1rem;
+}
+
+.header-toolbar {
+  display: grid;
+  gap: 0.75rem;
+  justify-items: end;
+}
+
+.header-toolbar .mission-status,
+.header-toolbar .header-actions {
+  width: 100%;
+}
+
+.header-simulation-switch {
+  width: 100%;
+  max-width: 22rem;
+  justify-self: end;
+}
+
+.simulation-switch-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mission-header h1 {
@@ -324,6 +348,103 @@ small {
   align-items: center;
   margin-bottom: 0.7rem;
   color: #8aa39a;
+}
+
+.live-video-primary video,
+.live-video-primary .live-stream-card img {
+  min-height: 260px;
+}
+
+.camera-section-title {
+  margin-top: 0.85rem;
+}
+
+.camera-section-title:first-child {
+  margin-top: 0;
+}
+
+.recognition-toolbar,
+.snapshot-toolbar {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.7rem;
+}
+
+.recognition-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 260px;
+  overflow: hidden;
+  border: 1px solid rgba(122, 255, 190, 0.22);
+  border-radius: 16px;
+  background: rgba(2, 6, 10, 0.45);
+}
+
+.recognition-frame-image {
+  width: 100%;
+  min-height: 260px;
+  max-height: 420px;
+  object-fit: contain;
+  background: #02060a;
+}
+
+.recognition-bbox {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  border: 2px solid rgba(250, 204, 21, 0.9);
+  color: #fef3c7;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.recognition-bbox.mine {
+  border-color: rgba(248, 113, 113, 0.9);
+  color: #fecaca;
+}
+
+.recognition-bbox.not_mine {
+  border-color: rgba(52, 211, 153, 0.9);
+  color: #bbf7d0;
+}
+
+.recognition-bbox.uncertain {
+  border-color: rgba(250, 204, 21, 0.9);
+  color: #fef3c7;
+}
+
+.recognition-evidence,
+.recognition-detections {
+  margin: 0.7rem 0 0;
+  padding-left: 1.1rem;
+  color: #9db4ac;
+}
+
+.snapshot-stage {
+  min-height: 180px;
+}
+
+.snapshot-image {
+  object-fit: contain;
+}
+
+.pc-camera-card {
+  display: grid;
+  gap: 0.45rem;
+  margin-bottom: 0.85rem;
+}
+
+.pc-camera-card video {
+  width: 100%;
+  min-height: 220px;
+  object-fit: cover;
+  border: 1px solid rgba(122, 255, 190, 0.18);
+  border-radius: 14px;
+  background: #02060a;
 }
 
 .camera-stream-toolbar button,
@@ -717,6 +838,12 @@ kbd {
   margin: 0.8rem 0;
 }
 
+.runtime-routing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.55rem;
+}
+
 .runtime-toggle {
   display: grid;
   grid-template-columns: auto 48px auto;
@@ -727,6 +854,17 @@ kbd {
   text-transform: uppercase;
   letter-spacing: 0.12em;
   font-size: 0.72rem;
+}
+
+.simulation-switch {
+  border: 1px solid rgba(122, 255, 190, 0.16);
+  border-radius: 12px;
+  padding: 0.7rem;
+  background: rgba(20, 184, 166, 0.08);
+}
+
+.header-simulation-switch.simulation-switch {
+  padding: 0.55rem 0.75rem;
 }
 
 .runtime-toggle input {
@@ -865,6 +1003,14 @@ kbd {
     align-items: start;
   }
 
+  .header-toolbar {
+    justify-items: stretch;
+  }
+
+  .header-simulation-switch {
+    max-width: none;
+  }
+
   .header-actions {
     justify-content: flex-start;
   }
@@ -925,6 +1071,9 @@ kbd {
   .camera-mark-controls,
   .movement-agent-actions,
   .route-actions,
+  .runtime-routing-grid,
+  .recognition-toolbar,
+  .snapshot-toolbar,
   .activation-card__top,
   .activation-actions,
   .safety-grid {

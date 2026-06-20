@@ -859,6 +859,39 @@ class SafeGroundP0Tests(unittest.TestCase):
         self.assertIn(EventType.SCOUT_ROUTE_PLANNED, event_types)
         self.assertIn(EventType.POINT_MAP_UPDATED, event_types)
 
+    def test_validate_frame_bytes_rejects_cyberwave_json_error(self) -> None:
+        service = OrchestratorService(self.config(tempfile.mkdtemp()))
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "No frame available for twin",
+        ):
+            service._validate_frame_bytes(
+                b'{"detail":"No frame available for twin 758bee49 (sensor_id=front_camera)"}'
+            )
+
+    def test_validate_frame_bytes_accepts_jpeg(self) -> None:
+        service = OrchestratorService(self.config(tempfile.mkdtemp()))
+        jpeg = b"\xff\xd8\xff\xe0" + b"\x00" * 20
+
+        validated = service._validate_frame_bytes(jpeg)
+
+        self.assertEqual(validated, jpeg)
+
+    def test_resolve_cyberwave_environment_id_from_local_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self.cyberwave_config(tmpdir)
+            (Path(tmpdir) / "cyberwave" / "environment.json").write_text(
+                json.dumps({"uuid": "70482104-4736-49df-adc3-06696f906b1f"}),
+                encoding="utf-8",
+            )
+            service = OrchestratorService(config)
+
+            self.assertEqual(
+                service._resolve_cyberwave_environment_id(),
+                "70482104-4736-49df-adc3-06696f906b1f",
+            )
+
     def test_fastapi_app_imports_with_registered_routes(self) -> None:
         from safeground.api.server import app
 
@@ -874,6 +907,8 @@ class SafeGroundP0Tests(unittest.TestCase):
         self.assertIn("/api/robots/{robot_id}/move", paths)
         self.assertIn("/api/robots/go2/movement-command", paths)
         self.assertIn("/api/robots/go2/route-plan", paths)
+        self.assertIn("/api/robots/{robot_id}/latest-frame", paths)
+        self.assertIn("/api/robots/{robot_id}/classify-frame", paths)
         self.assertIn("/api/camera-streams", paths)
         self.assertIn("/api/object-pickup/sessions", paths)
         self.assertIn("/api/object-pickup/start", paths)

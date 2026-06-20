@@ -22,6 +22,7 @@ import type {
   BaseMovementCommandRequest,
   BaseMovementAction,
   BaseMovementResult,
+  CameraSource,
   CameraStream,
   ClassificationLabel,
   CyberwaveRobot,
@@ -92,6 +93,16 @@ let socket: WebSocket | null = null;
 const missionState = computed(() => snapshot.value?.mission?.state ?? report.value?.state ?? "IDLE");
 const runtimeMode = computed(() => runtimeStatus.value?.runtime_mode ?? "mock");
 const dryRun = computed(() => runtimeStatus.value?.dry_run ?? true);
+const robotMovementTarget = computed<MovementTarget>(
+  () =>
+    runtimeStatus.value?.robot_movement_target ??
+    (runtimeMode.value === "live" && !dryRun.value ? "physical" : "virtual"),
+);
+const cameraSource = computed<CameraSource>(
+  () =>
+    runtimeStatus.value?.camera_source ??
+    (runtimeMode.value === "live" && !dryRun.value ? "robot" : "pc"),
+);
 const liveAdapterReady = computed(() => runtimeStatus.value?.live_adapter_ready ?? false);
 const runtimeNote = computed(() => runtimeStatus.value?.note ?? "Runtime status unavailable.");
 const observations = computed(() => report.value?.observations ?? []);
@@ -481,9 +492,12 @@ onUnmounted(() => {
       :state="missionState"
       :runtime-mode="runtimeMode"
       :dry-run="dryRun"
+      :robot-movement-target="robotMovementTarget"
+      :camera-source="cameraSource"
       :busy="busy"
       @start="(scenario) => runAction(() => startMission(scenario))"
       @stop="() => runAction(stopMission)"
+      @runtime-change="(command) => runRuntimeChange(command)"
     />
 
     <p v-if="error" class="error-banner">{{ error }}</p>
@@ -507,6 +521,8 @@ onUnmounted(() => {
         <SafetyControls
           :dry-run="dryRun"
           :runtime-mode="runtimeMode"
+          :robot-movement-target="robotMovementTarget"
+          :camera-source="cameraSource"
           :live-adapter-ready="liveAdapterReady"
           :runtime-note="runtimeNote"
           :busy="busy"
@@ -518,6 +534,7 @@ onUnmounted(() => {
           :activations="robotActivations"
           :runtime-mode="runtimeMode"
           :dry-run="dryRun"
+          :default-movement-target="robotMovementTarget"
           :movement-controller="movementController"
           :busy="busy"
           :keyboard-drive-enabled="keyboardDriveEnabled"
@@ -557,8 +574,10 @@ onUnmounted(() => {
         />
         <CameraPanel
           :observation="latestObservation"
+          :report="report"
           :streams="cameraStreams"
           :runtime-mode="runtimeMode"
+          :camera-source="cameraSource"
           @mark="(label) => markCameraObject(label)"
         />
         <ObjectPickupPanel

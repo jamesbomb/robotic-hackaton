@@ -4,6 +4,7 @@ import type {
   CameraStream,
   CyberwaveRobot,
   EventRecord,
+  FrameClassificationResult,
   ManualArmCommandRequest,
   ManualArmResult,
   MissionReport,
@@ -35,6 +36,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`${response.status} ${detail}`);
   }
   return response.json() as Promise<T>;
+}
+
+export function classifyRobotFrame(robotId: string) {
+  return request<FrameClassificationResult>(`/api/robots/${robotId}/classify-frame`, {
+    method: "POST",
+  });
 }
 
 export function getSnapshot() {

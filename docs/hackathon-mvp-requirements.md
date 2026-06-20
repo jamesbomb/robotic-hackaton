@@ -183,6 +183,7 @@ Vista consigliata:
 - Header con stato missione: `idle`, `scanning`, `needs_second_look`, `confirmed`, `manual_stop`.
 - Pannello video principale con bounding box e label.
 - Pannello robot: UGV, Go2, SO-101, camera fissa, stato online/offline e modalita' `live/sim/dry-run`.
+- Switch modalita' simulata/fisica: in simulazione i comandi vanno ai twin virtuali e la UI usa la camera PC; in fisico i comandi puntano ai robot reali e la UI usa le camere onboard/robot.
 - Event log append-only.
 - Pannello decisione: classe corrente, confidence, rationale, prossima azione.
 - Controlli: `Start Scan`, `Request Second Look`, `Confirm Mine`, `Mark Non Mine`, `Move Forward/Backward`, `Rotate Left/Right`, `Stop All`, `Dry Run`.

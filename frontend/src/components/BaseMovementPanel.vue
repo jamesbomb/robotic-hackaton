@@ -17,6 +17,7 @@ const props = defineProps<{
   activations: RobotActivationState[];
   runtimeMode: RuntimeMode;
   dryRun: boolean;
+  defaultMovementTarget: MovementTarget;
   movementController: MovementControllerState;
   busy: boolean;
   keyboardDriveEnabled: boolean;
@@ -73,6 +74,13 @@ const canUsePhysical = computed(
     !props.dryRun &&
     Boolean(selectedActivation.value?.armed && selectedActivation.value.physical_enabled),
 );
+const canRequestPhysical = computed(() => props.runtimeMode === "live" && !props.dryRun);
+const selectedPhysicalTargetBlocked = computed(
+  () =>
+    movementTarget.value !== "virtual" &&
+    movementTarget.value !== "auto" &&
+    !canUsePhysical.value,
+);
 
 function send(action: BaseMovementAction) {
   const robot = selectedRobot.value;
@@ -125,6 +133,14 @@ watch(
     keyboardEnabled.value = enabled;
   },
 );
+
+watch(
+  () => props.defaultMovementTarget,
+  (defaultMovementTarget) => {
+    movementTarget.value = defaultMovementTarget;
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -157,12 +173,13 @@ watch(
       <select v-model="movementTarget" :disabled="busy || !selectedRobot">
         <option value="virtual">Virtual dashboard twin</option>
         <option value="auto">Auto safe default</option>
-        <option :disabled="!canUsePhysical" value="physical">Physical robot</option>
-        <option :disabled="!canUsePhysical" value="both">Both virtual + physical</option>
+        <option :disabled="!canRequestPhysical" value="physical">Physical robot</option>
+        <option :disabled="!canRequestPhysical" value="both">Both virtual + physical</option>
       </select>
     </label>
     <p class="subtle">
       Physical targets require live mode, dry-run off, and an armed robot.
+      <span v-if="selectedPhysicalTargetBlocked">Arm this robot before sending movement.</span>
     </p>
 
     <div class="keyboard-control">
@@ -197,7 +214,10 @@ watch(
         />
       </label>
       <div class="movement-agent-actions">
-        <button :disabled="busy || !movementText.trim()" @click="sendMovementText">
+        <button
+          :disabled="busy || !movementText.trim() || selectedPhysicalTargetBlocked"
+          @click="sendMovementText"
+        >
           Run Go2 Command
         </button>
         <button class="danger-button" @click="emit('stopRobot', 'go2')">
@@ -221,12 +241,12 @@ watch(
     </div>
 
     <div class="movement-grid">
-      <button :disabled="busy || !selectedRobot" @click="send('move_forward')">Forward</button>
-      <button :disabled="busy || !selectedRobot" @click="send('move_backward')">Backward</button>
-      <button :disabled="busy || !selectedRobot" @click="send('strafe_left')">Strafe L</button>
-      <button :disabled="busy || !selectedRobot" @click="send('strafe_right')">Strafe R</button>
-      <button :disabled="busy || !selectedRobot" @click="send('rotate_left')">Rotate L</button>
-      <button :disabled="busy || !selectedRobot" @click="send('rotate_right')">Rotate R</button>
+      <button :disabled="busy || !selectedRobot || selectedPhysicalTargetBlocked" @click="send('move_forward')">Forward</button>
+      <button :disabled="busy || !selectedRobot || selectedPhysicalTargetBlocked" @click="send('move_backward')">Backward</button>
+      <button :disabled="busy || !selectedRobot || selectedPhysicalTargetBlocked" @click="send('strafe_left')">Strafe L</button>
+      <button :disabled="busy || !selectedRobot || selectedPhysicalTargetBlocked" @click="send('strafe_right')">Strafe R</button>
+      <button :disabled="busy || !selectedRobot || selectedPhysicalTargetBlocked" @click="send('rotate_left')">Rotate L</button>
+      <button :disabled="busy || !selectedRobot || selectedPhysicalTargetBlocked" @click="send('rotate_right')">Rotate R</button>
     </div>
   </CollapsiblePanel>
 </template>

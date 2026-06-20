@@ -22,6 +22,7 @@ export type BaseMovementAction =
   | "rotate_right";
 export type RuntimeMode = "mock" | "simulation" | "live";
 export type MovementTarget = "auto" | "virtual" | "physical" | "both";
+export type CameraSource = "pc" | "robot";
 export type RobotActivationMode = "ready" | "armed";
 export type MovementFSMState =
   | "IDLE"
@@ -56,6 +57,8 @@ export interface RobotStatus {
 export interface RuntimeConfigRequest {
   runtime_mode: RuntimeMode;
   dry_run: boolean;
+  robot_movement_target?: MovementTarget;
+  camera_source?: CameraSource;
   operator_id?: string;
   operator_confirmed: boolean;
   reason?: string;
@@ -64,6 +67,8 @@ export interface RuntimeConfigRequest {
 export interface RuntimeStatus {
   runtime_mode: RuntimeMode;
   dry_run: boolean;
+  robot_movement_target: MovementTarget;
+  camera_source: CameraSource;
   live_adapter_ready: boolean;
   note: string;
 }
@@ -270,6 +275,18 @@ export interface ObjectPickupSession {
   replay_count: number;
   started_at: string;
   finished_at: string | null;
+}
+
+export interface FrameClassificationResult {
+  frame_id: string;
+  robot_id: string;
+  frame_media_type: string;
+  frame_base64: string;
+  classification: ClassificationResult;
+  detections: Array<Record<string, unknown>>;
+  model_id: string | null;
+  valid: boolean;
+  validation_errors: string[];
 }
 
 export interface FrameRef {

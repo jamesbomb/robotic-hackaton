@@ -511,15 +511,23 @@ vincolate a runtime `live + dry_run=false` e robot armato.
 
 ### Frame Go2 In Web UI
 
-Il pattern Cyberwave validato per leggere l'immagine corrente e' equivalente a:
+Il pattern Cyberwave validato per leggere l'immagine corrente e' equivalente al notebook Colab:
 
 ```python
 from cyberwave import Cyberwave
 
 cw = Cyberwave(api_key=CYBERWAVE_API_KEY, environment_id=CYBERWAVE_ENVIRONMENT)
-dog = cw.twin("unitree/go2")
-img_bytes = dog.get_frame(source="cloud")
+cw.affect("live")  # oppure "simulation" in dry-run
+dog = cw.twin(
+    twin_id="758bee49-6668-4733-80f8-da1c0a7134b2",
+    environment_id=CYBERWAVE_ENVIRONMENT,
+)
+img_bytes = dog.get_latest_frame()  # alias di get_frame(source="cloud")
 ```
+
+SafeGround risolve automaticamente `CYBERWAVE_ENVIRONMENT` da `~/.cyberwave/environment.json`
+se non e' presente in `.env`, mappa il robot al twin UUID locale e rifiuta payload JSON
+d'errore mascherati da immagine.
 
 Nel backend SafeGround questo viene esposto come endpoint read-only:
 

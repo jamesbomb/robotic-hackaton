@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
 import math
 import os
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 from safeground.adapters import RobotAdapter, build_mock_fleet
 from safeground.agents import MovementCommandAgent, OperatorCommandAgent, OrchestratorAgent
@@ -17,11 +21,13 @@ from safeground.models import (
     BaseMovementCommand,
     BaseMovementResult,
     CameraStream,
+    CameraSource,
     ClassificationLabel,
     ClassificationResult,
     CommandRequest,
     EventType,
     Finding,
+    FrameRef,
     ManualArmCommand,
     ManualArmResult,
     MapObstacle,
@@ -87,12 +93,13 @@ class OrchestratorService:
         return RuntimeStatus(
             runtime_mode=self.config.runtime_mode,
             dry_run=self.config.dry_run,
+            robot_movement_target=self.config.robot_movement_target,
+            camera_source=self.config.camera_source,
             live_adapter_ready=self.config.runtime_mode == RuntimeMode.LIVE and not self.config.dry_run,
             note=(
-                "Live MQTT command bridge is enabled; controller policy topic and broker "
-                "must be validated before moving hardware."
-                if self.config.runtime_mode == RuntimeMode.LIVE
-                else "Mock/simulation-safe adapters are active."
+                "Physical robot target and onboard robot cameras selected; arm each robot before moving hardware."
+                if self.config.runtime_mode == RuntimeMode.LIVE and not self.config.dry_run
+                else "Simulation-safe mode selected; robot commands stay virtual and the dashboard uses the PC camera."
             ),
         )
 
@@ -106,6 +113,16 @@ class OrchestratorService:
 
         self.config.runtime_mode = request.runtime_mode
         self.config.dry_run = request.dry_run
+        self.config.robot_movement_target = request.robot_movement_target or (
+            MovementTarget.PHYSICAL
+            if request.runtime_mode == RuntimeMode.LIVE and not request.dry_run
+            else MovementTarget.VIRTUAL
+        )
+        self.config.camera_source = request.camera_source or (
+            CameraSource.ROBOT
+            if request.runtime_mode == RuntimeMode.LIVE and not request.dry_run
+            else CameraSource.PC
+        )
         self._sync_adapter_runtime()
         if self.active_runner is not None:
             self.active_runner.config.runtime_mode = request.runtime_mode
@@ -127,6 +144,11 @@ class OrchestratorService:
         return status
 
     def camera_streams(self) -> list[CameraStream]:
+        if self.config.camera_source == CameraSource.PC:
+            return []
+        return self._cyberwave_camera_streams()
+
+    def _cyberwave_camera_streams(self) -> list[CameraStream]:
         path = self.config.cyberwave_config_dir / "camera_streams.json"
         if not path.exists():
             return []
@@ -158,7 +180,7 @@ class OrchestratorService:
     def discover_cyberwave_robots(self, *, emit_event: bool = True) -> list[CyberwaveRobot]:
         config_dir = self.config.cyberwave_config_dir
         environment_path = config_dir / "environment.json"
-        streams_by_twin = {stream.twin_id: stream for stream in self.camera_streams()}
+        streams_by_twin = {stream.twin_id: stream for stream in self._cyberwave_camera_streams()}
         robots: list[CyberwaveRobot] = []
 
         if environment_path.exists():
@@ -285,20 +307,163 @@ class OrchestratorService:
         if robot_id not in self.fleet:
             raise KeyError(robot_id)
 
+        frame_bytes = await asyncio.to_thread(self._fetch_latest_robot_frame_sync, robot_id)
+        return frame_bytes, self._image_media_type(frame_bytes)
+
+    async def classify_robot_frame(self, robot_id: str) -> dict:
+        if robot_id not in self.fleet:
+            raise KeyError(robot_id)
+
+        frame_bytes, media_type = await self.latest_robot_frame(robot_id)
+        output_dir = Path("safeground_runs/frames")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        frame_id = f"{robot_id}-{uuid4().hex[:8]}"
+        suffix = ".jpg" if media_type == "image/jpeg" else ".png"
+        output_path = output_dir / f"{frame_id}{suffix}"
+        output_path.write_bytes(frame_bytes)
+
+        frame_ref = FrameRef(
+            frame_id=frame_id,
+            sensor_id=f"{robot_id}-camera",
+            source="cyberwave",
+            path=output_path,
+            metadata={"robot_id": robot_id},
+        )
+        classification = await self._build_cv_client().classify(frame_ref, "FIELD")
+        raw_response = classification.raw_response if isinstance(classification.raw_response, dict) else {}
+        return {
+            "frame_id": frame_id,
+            "robot_id": robot_id,
+            "frame_media_type": media_type,
+            "frame_base64": base64.b64encode(frame_bytes).decode("ascii"),
+            "classification": classification.result.model_dump(mode="json"),
+            "detections": raw_response.get("detections", []),
+            "model_id": raw_response.get("model_id"),
+            "valid": classification.valid,
+            "validation_errors": classification.validation_errors,
+        }
+
+    def _fetch_latest_robot_frame_sync(self, robot_id: str) -> bytes:
         api_key = os.environ.get("CYBERWAVE_API_KEY")
-        environment_id = os.environ.get("CYBERWAVE_ENVIRONMENT")
-        if not api_key or not environment_id:
-            raise RuntimeError("CYBERWAVE_API_KEY and CYBERWAVE_ENVIRONMENT are required.")
+        if not api_key:
+            raise RuntimeError("CYBERWAVE_API_KEY is required to read robot frames.")
 
         try:
             from cyberwave import Cyberwave
         except ImportError as exc:
             raise RuntimeError("Install cyberwave[camera] to read latest robot frames.") from exc
 
-        cw = Cyberwave(api_key=api_key, environment_id=environment_id)
-        twin = cw.twin(self._cyberwave_twin_slug(robot_id))
-        frame_bytes = twin.get_frame(source="cloud")
-        return frame_bytes, self._image_media_type(frame_bytes)
+        environment_id = self._resolve_cyberwave_environment_id()
+        twin_ref = self._resolve_cyberwave_twin_ref(robot_id)
+        affect_modes = self._cyberwave_affect_modes()
+        errors: list[str] = []
+
+        for affect_mode in affect_modes:
+            try:
+                cw = Cyberwave(api_key=api_key, environment_id=environment_id)
+                cw.affect(affect_mode)
+                twin = self._open_cyberwave_twin(cw, robot_id, twin_ref, environment_id)
+                frame_bytes = self._read_cyberwave_frame_bytes(twin)
+                return self._validate_frame_bytes(frame_bytes)
+            except RuntimeError as exc:
+                errors.append(f"{affect_mode}: {exc}")
+            except Exception as exc:  # pragma: no cover - depends on Cyberwave runtime
+                errors.append(f"{affect_mode}: {exc}")
+
+        detail = "; ".join(errors) or "No robot frame available."
+        raise RuntimeError(detail)
+
+    def _resolve_cyberwave_environment_id(self) -> str | None:
+        configured = os.environ.get("CYBERWAVE_ENVIRONMENT")
+        if configured:
+            return configured
+
+        environment_path = self.config.cyberwave_config_dir / "environment.json"
+        if not environment_path.exists():
+            return None
+
+        raw_environment = json.loads(environment_path.read_text(encoding="utf-8"))
+        return raw_environment.get("uuid") or raw_environment.get("environment_id")
+
+    def _resolve_cyberwave_twin_ref(self, robot_id: str) -> dict[str, str | None]:
+        configured_uuid = os.environ.get(
+            f"SAFEGROUND_CYBERWAVE_TWIN_UUID_{robot_id.upper().replace('-', '_')}"
+        )
+        slug = self._cyberwave_twin_slug(robot_id)
+        twin_uuid = configured_uuid
+
+        if twin_uuid is None:
+            for robot in self.discover_cyberwave_robots(emit_event=False):
+                if robot.robot_id == robot_id and not robot.twin_uuid.startswith("mock-"):
+                    twin_uuid = robot.twin_uuid
+                    slug = robot.slug or robot.registry_id or slug
+                    break
+
+        return {"twin_uuid": twin_uuid, "slug": slug}
+
+    def _cyberwave_affect_modes(self) -> list[str]:
+        if self.config.runtime_mode == RuntimeMode.LIVE and not self.config.dry_run:
+            return ["live", "simulation"]
+        return ["simulation", "live"]
+
+    def _open_cyberwave_twin(
+        self,
+        cw,
+        robot_id: str,
+        twin_ref: dict[str, str | None],
+        environment_id: str | None,
+    ):
+        twin_uuid = twin_ref.get("twin_uuid")
+        slug = twin_ref.get("slug")
+        if twin_uuid and environment_id:
+            return cw.twin(twin_id=twin_uuid, environment_id=environment_id)
+        if twin_uuid:
+            return cw.twin(twin_id=twin_uuid)
+        if slug:
+            return cw.twin(slug)
+        raise RuntimeError(f"No Cyberwave twin mapping found for robot {robot_id!r}.")
+
+    def _read_cyberwave_frame_bytes(self, twin) -> bytes | None:
+        if hasattr(twin, "get_latest_frame"):
+            frame_bytes = twin.get_latest_frame()
+            return frame_bytes or None
+
+        for source in ("cloud",):
+            try:
+                frame_bytes = twin.get_frame(source=source)
+            except Exception:
+                continue
+            if frame_bytes:
+                return frame_bytes
+
+        try:
+            captured = twin.capture_frame("bytes")
+        except Exception:
+            captured = None
+        if isinstance(captured, (bytes, bytearray)) and captured:
+            return bytes(captured)
+        return None
+
+    def _validate_frame_bytes(self, frame_bytes: bytes | None) -> bytes:
+        if not frame_bytes:
+            raise RuntimeError("Cyberwave returned an empty frame.")
+
+        if frame_bytes[:1] == b"{":
+            try:
+                payload = json.loads(frame_bytes.decode("utf-8"))
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("Cyberwave returned a non-image payload.") from exc
+            detail = payload.get("detail") or payload.get("message") or payload.get("error")
+            raise RuntimeError(str(detail or "Cyberwave returned a non-image payload."))
+
+        if self._image_media_type(frame_bytes) not in {
+            "image/jpeg",
+            "image/png",
+            "image/gif",
+            "image/webp",
+        }:
+            raise RuntimeError("Cyberwave returned an unsupported frame format.")
+        return frame_bytes
 
     async def start_object_pickup(
         self,
@@ -743,10 +908,23 @@ class OrchestratorService:
             active_object_pickup_session=self.active_object_pickup_session,
         )
 
+    def _build_cv_client(self):
+        if env_bool("SAFEGROUND_USE_VLM", True):
+            live_vision_dir = Path(__file__).resolve().parents[2] / "live_vision"
+            if live_vision_dir.exists() and str(live_vision_dir) not in sys.path:
+                sys.path.insert(0, str(live_vision_dir))
+            try:
+                from cv_safeground import CyberwaveVLMClient
+
+                return CyberwaveVLMClient()
+            except ImportError:
+                pass
+        return MockCVClient(self.config)
+
     def _build_runner(self) -> MissionRunner:
         self._sync_adapter_runtime()
         robot = self._primary_robot()
-        cv_client = MockCVClient(self.config)
+        cv_client = self._build_cv_client()
         safety = SafetyGovernor(self.config, self.event_store)
         return MissionRunner(
             self.config,
@@ -803,11 +981,7 @@ class OrchestratorService:
     ) -> BaseMovementCommand:
         target = command.movement_target
         if target == MovementTarget.AUTO:
-            target = (
-                MovementTarget.PHYSICAL
-                if self.config.runtime_mode == RuntimeMode.LIVE and not self.config.dry_run
-                else MovementTarget.VIRTUAL
-            )
+            target = self.config.robot_movement_target
 
         wants_physical = target in {MovementTarget.PHYSICAL, MovementTarget.BOTH}
         if wants_physical:

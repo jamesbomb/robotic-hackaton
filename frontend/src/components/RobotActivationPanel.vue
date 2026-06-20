@@ -53,8 +53,7 @@ function activate(robotId: string, mode: RobotActivationMode) {
     default-open
   >
     <p>
-      Activate robots before movement. Virtual movement updates the dashboard twin;
-      physical movement requires <code>live</code>, dry-run disabled, and an armed robot.
+      Activate robots before movement.
     </p>
 
     <label>

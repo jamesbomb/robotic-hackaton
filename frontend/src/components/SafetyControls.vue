@@ -1,6 +1,12 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import type { CameraSource, MovementTarget, RuntimeConfigRequest, RuntimeMode } from "../types";
+import {
+  isPhysicalRuntime,
+  physicalRuntimePreset,
+  simulatedRuntimePreset,
+  syncRoutingWithRuntime,
+} from "../runtimePresets";
 import CollapsiblePanel from "./CollapsiblePanel.vue";
 
 const props = defineProps<{
@@ -38,6 +44,27 @@ watch(
   },
 );
 
+watch([selectedRuntimeMode, selectedDryRun], ([runtimeMode, dryRun]) => {
+  const synced = syncRoutingWithRuntime(runtimeMode, dryRun, {
+    runtime_mode: selectedRuntimeMode.value,
+    dry_run: selectedDryRun.value,
+    robot_movement_target: selectedRobotMovementTarget.value,
+    camera_source: selectedCameraSource.value,
+  });
+  selectedRuntimeMode.value = synced.runtime_mode;
+  selectedDryRun.value = synced.dry_run;
+  selectedRobotMovementTarget.value = synced.robot_movement_target;
+  selectedCameraSource.value = synced.camera_source;
+});
+
+function applyPhysicalPreset() {
+  emit("runtimeChange", physicalRuntimePreset("Operator selected physical preset from Safety panel."));
+}
+
+function applySimulatedPreset() {
+  emit("runtimeChange", simulatedRuntimePreset("Operator selected simulated preset from Safety panel."));
+}
+
 function updateRuntime() {
   submitRuntime("Operator selected runtime settings from the dashboard.");
 }
@@ -52,19 +79,42 @@ function submitRuntime(reason: string) {
     reason,
   });
 }
+
+const physicalActive = computed(() =>
+  isPhysicalRuntime({
+    runtime_mode: props.runtimeMode,
+    dry_run: props.dryRun,
+    robot_movement_target: props.robotMovementTarget,
+    camera_source: props.cameraSource,
+  }),
+);
 </script>
 
 <template>
   <CollapsiblePanel title="Safety" :meta="runtimeMode" panel-class="safety-panel">
     <p>
-      Physical movement remains blocked by default. The system only emits allow-listed
-      actions and requires human takeover for live robot motion.
+      Physical movement remains blocked by default. Use the header switch or the presets below
+      before arming robots or sending live motion.
     </p>
+
+    <div class="runtime-preset-actions">
+      <button type="button" :disabled="busy || physicalActive" @click="applyPhysicalPreset">
+        Passa a fisico
+      </button>
+      <button type="button" :disabled="busy || !physicalActive" @click="applySimulatedPreset">
+        Torna a simulata
+      </button>
+    </div>
+
     <div class="safety-grid">
       <span>Dry run</span>
       <strong>{{ dryRun ? "enabled" : "disabled" }}</strong>
       <span>Live adapter</span>
       <strong>{{ liveAdapterReady ? "ready" : "not wired" }}</strong>
+      <span>Robot target</span>
+      <strong>{{ robotMovementTarget }}</strong>
+      <span>Camera</span>
+      <strong>{{ cameraSource }}</strong>
       <span>Contact with target</span>
       <strong>blocked</strong>
       <span>Stop path</span>

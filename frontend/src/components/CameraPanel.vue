@@ -28,12 +28,14 @@ const emit = defineEmits<{
   "risk-map-update": [riskMap: RiskMapState];
 }>();
 
-const LIVE_FRAME_MS = 120;
+const LIVE_FRAME_MS = 200;
 
 const disabledStreamIds = ref<Set<string>>(new Set());
 const failedStreamIds = ref<Set<string>>(new Set());
 const pcFrameSrc = ref("");
 const pcCameraStatus = ref("Live vision worker starting...");
+const robotFrameSrc = ref("");
+const robotFeedStatus = ref("Go2 camera standby.");
 
 const snapshotSrc = ref("");
 const snapshotLoading = ref(false);
@@ -44,6 +46,12 @@ let liveFrameTimer: number | null = null;
 let snapshotObjectUrl: string | null = null;
 
 const focusRobotId = computed(() => props.observation?.robot_id ?? "go2");
+const cameraRobotId = computed(() => {
+  if (props.cameraSource !== "robot") {
+    return "pc-camera";
+  }
+  return String(props.visionStatus?.robot_id ?? "go2");
+});
 const robotStreams = computed(() => (props.cameraSource === "robot" ? props.streams : []));
 const disabledStreamCount = computed(() => disabledStreamIds.value.size);
 
@@ -72,7 +80,7 @@ const vlmStatusText = computed(() => {
   const source =
     props.cameraSource === "pc"
       ? `PC cam ${String(props.visionStatus?.camera_index ?? 0)}`
-      : `${focusRobotId.value} robot camera`;
+      : `${cameraRobotId.value} robot camera`;
   const lastError = props.visionStatus?.last_error;
   if (typeof lastError === "string" && lastError.length > 0) {
     return lastError;
@@ -159,6 +167,51 @@ function stopPcFrameLoop() {
   pcFrameSrc.value = "";
 }
 
+async function refreshRobotFrame() {
+  try {
+    const response = await fetch(
+      `/api/robots/${cameraRobotId.value}/latest-frame?t=${Date.now()}`,
+    );
+    if (!response.ok) {
+      robotFeedStatus.value = `Waiting for ${cameraRobotId.value} onboard camera...`;
+      return;
+    }
+    const blob = await response.blob();
+    if (!blob.type.startsWith("image/")) {
+      robotFeedStatus.value = "Cyberwave returned a non-image payload.";
+      return;
+    }
+    const nextUrl = URL.createObjectURL(blob);
+    if (robotFrameSrc.value.startsWith("blob:")) {
+      URL.revokeObjectURL(robotFrameSrc.value);
+    }
+    robotFrameSrc.value = nextUrl;
+    robotFeedStatus.value = `${cameraRobotId.value} onboard camera · Cyberwave SDK`;
+  } catch {
+    robotFeedStatus.value = `${cameraRobotId.value} camera unavailable.`;
+  }
+}
+
+function startRobotFrameLoop() {
+  stopRobotFrameLoop();
+  void refreshRobotFrame();
+  liveFrameTimer = window.setInterval(() => {
+    void refreshRobotFrame();
+  }, LIVE_FRAME_MS);
+}
+
+function stopRobotFrameLoop() {
+  if (liveFrameTimer !== null) {
+    window.clearInterval(liveFrameTimer);
+    liveFrameTimer = null;
+  }
+  if (robotFrameSrc.value.startsWith("blob:")) {
+    URL.revokeObjectURL(robotFrameSrc.value);
+  }
+  robotFrameSrc.value = "";
+  robotFeedStatus.value = "Go2 camera standby.";
+}
+
 async function captureSnapshot() {
   if (props.cameraSource !== "robot" || props.runtimeMode === "mock") {
     snapshotError.value = "Snapshots are available only in robot camera mode.";
@@ -169,7 +222,7 @@ async function captureSnapshot() {
   snapshotError.value = "";
   try {
     const response = await fetch(
-      `/api/robots/${focusRobotId.value}/latest-frame?t=${Date.now()}`,
+      `/api/robots/${cameraRobotId.value}/latest-frame?t=${Date.now()}`,
     );
     if (!response.ok) {
       const body = await response.json().catch(() => null);
@@ -199,9 +252,11 @@ async function captureSnapshot() {
 
 function applyCameraSource(cameraSource: CameraSource) {
   if (cameraSource === "pc") {
+    stopRobotFrameLoop();
     startPcFrameLoop();
   } else {
     stopPcFrameLoop();
+    startRobotFrameLoop();
   }
 }
 
@@ -220,6 +275,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopPcFrameLoop();
+  stopRobotFrameLoop();
   clearSnapshotObjectUrl();
 });
 
@@ -231,6 +287,12 @@ watch(
     }
   },
 );
+
+watch(cameraRobotId, () => {
+  if (props.cameraSource === "robot") {
+    startRobotFrameLoop();
+  }
+});
 
 watch(
   () => robotStreams.value.map((stream) => stream.twin_id),
@@ -291,14 +353,36 @@ watch(
       <small class="live-feed-caption">{{ pcCameraStatus }}</small>
     </div>
 
-    <div v-if="robotStreams.length" class="camera-stream-toolbar">
+    <div v-if="cameraSource === 'robot'" class="live-feed-stage live-video-primary">
+      <img
+        v-if="robotFrameSrc"
+        class="live-vision-frame"
+        :src="robotFrameSrc"
+        :alt="`${cameraRobotId} onboard camera`"
+      />
+      <p v-else class="subtle live-vision-placeholder">
+        Waiting for {{ cameraRobotId }} onboard camera...
+      </p>
+      <VideoFeedOverlay
+        :detections="liveDetections"
+        :risk-map="overlayRiskMap"
+        :observer-label="cameraRobotId"
+      />
+      <small class="live-feed-caption">{{ robotFeedStatus }}</small>
+    </div>
+
+    <div v-if="robotStreams.length > 1" class="camera-stream-toolbar">
       <span>{{ robotStreams.length - disabledStreamCount }} / {{ robotStreams.length }} streams active</span>
       <button type="button" :disabled="disabledStreamCount === 0" @click="enableAllStreams">
         Enable all
       </button>
     </div>
-    <div v-if="robotStreams.length" class="live-stream-grid live-video-primary">
-      <article v-for="stream in robotStreams" :key="stream.twin_id" class="live-stream-card">
+    <div v-if="robotStreams.length > 1" class="live-stream-grid">
+      <article
+        v-for="stream in robotStreams.filter((item) => item.robot_id !== cameraRobotId)"
+        :key="stream.twin_id"
+        class="live-stream-card"
+      >
         <div>
           <strong>{{ stream.robot_id }}</strong>
           <small>{{ stream.twin_id.slice(0, 8) }}</small>
@@ -311,7 +395,7 @@ watch(
             @error="handleStreamError(stream)"
           />
           <VideoFeedOverlay
-            v-if="stream.robot_id === focusRobotId"
+            v-if="stream.robot_id === cameraRobotId"
             :detections="liveDetections"
             :risk-map="overlayRiskMap"
             :observer-label="stream.robot_id"
@@ -319,14 +403,14 @@ watch(
         </div>
         <div v-else class="live-stream-disabled">Stream disabled in Web UI.</div>
         <small v-if="failedStreamIds.has(stream.twin_id)" class="stream-error">
-          Stream not reachable from browser.
+          MJPEG stream not reachable (SDK frame used for {{ cameraRobotId }}).
         </small>
         <button type="button" @click="toggleStream(stream)">
           {{ isStreamEnabled(stream) ? "Disable stream" : "Enable stream" }}
         </button>
       </article>
     </div>
-    <p v-else-if="cameraSource === 'robot'" class="subtle">
+    <p v-if="cameraSource === 'robot' && robotStreams.length === 0" class="subtle">
       No Cyberwave stream map found. Pair the robot camera first.
     </p>
 
@@ -364,7 +448,7 @@ watch(
         v-if="snapshotSrc"
         class="latest-frame-image snapshot-image"
         :src="snapshotSrc"
-        :alt="`${focusRobotId} captured snapshot`"
+        :alt="`${cameraRobotId} captured snapshot`"
       />
       <p v-else class="subtle">
         {{

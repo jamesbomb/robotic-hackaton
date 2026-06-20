@@ -76,6 +76,13 @@ class OrchestratorService:
             runtime_mode=runtime_mode,
             dry_run=env_bool("SAFEGROUND_DRY_RUN", True),
         )
+        if self.config.runtime_mode == RuntimeMode.LIVE and not self.config.dry_run:
+            self.config.robot_movement_target = MovementTarget.PHYSICAL
+            self.config.camera_source = CameraSource.ROBOT
+            self.config.robot_id = "go2"
+        elif self.config.runtime_mode in {RuntimeMode.MOCK, RuntimeMode.SIMULATION} or self.config.dry_run:
+            self.config.robot_movement_target = MovementTarget.VIRTUAL
+            self.config.camera_source = CameraSource.PC
         self.event_store = JsonlEventStore(self.config.event_log_path)
         self.fleet = build_mock_fleet(self.config)
         self.latest_report: MissionReport | None = None
@@ -131,16 +138,26 @@ class OrchestratorService:
 
         self.config.runtime_mode = request.runtime_mode
         self.config.dry_run = request.dry_run
-        self.config.robot_movement_target = request.robot_movement_target or (
-            MovementTarget.PHYSICAL
-            if request.runtime_mode == RuntimeMode.LIVE and not request.dry_run
-            else MovementTarget.VIRTUAL
-        )
-        self.config.camera_source = request.camera_source or (
-            CameraSource.ROBOT
-            if request.runtime_mode == RuntimeMode.LIVE and not request.dry_run
-            else CameraSource.PC
-        )
+        if request.robot_movement_target is not None:
+            self.config.robot_movement_target = request.robot_movement_target
+        elif request.runtime_mode == RuntimeMode.LIVE and not request.dry_run:
+            self.config.robot_movement_target = MovementTarget.PHYSICAL
+        else:
+            self.config.robot_movement_target = MovementTarget.VIRTUAL
+
+        if request.camera_source is not None:
+            self.config.camera_source = request.camera_source
+        elif request.runtime_mode == RuntimeMode.LIVE and not request.dry_run:
+            self.config.camera_source = CameraSource.ROBOT
+        else:
+            self.config.camera_source = CameraSource.PC
+
+        if (
+            self.config.runtime_mode == RuntimeMode.LIVE
+            and not self.config.dry_run
+            and self.config.camera_source == CameraSource.ROBOT
+        ):
+            self.config.robot_id = "go2"
         self._sync_adapter_runtime()
         if self.active_runner is not None:
             self.active_runner.config.runtime_mode = request.runtime_mode
@@ -1190,6 +1207,16 @@ class OrchestratorService:
 
     def _primary_robot(self) -> RobotAdapter:
         return self.fleet.get(self.config.robot_id) or self.fleet["go2"]
+
+    def vision_robot_id(self) -> str:
+        """Robot whose onboard camera feeds live vision and the dashboard."""
+        if self.config.camera_source != CameraSource.ROBOT:
+            return "pc-camera"
+        if "go2" in self.fleet:
+            return "go2"
+        if self.config.robot_id in self.fleet:
+            return self.config.robot_id
+        return "go2"
 
     def _sync_adapter_runtime(self) -> None:
         for robot in self.fleet.values():

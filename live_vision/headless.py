@@ -190,9 +190,10 @@ class HeadlessVisionLoop:
                     detections = cw_vision.classify(frame)
                     model_id = "google/models/gemini-robotics-er-16"
                     frame_id = f"vision-{int(now * 1000)}"
+                    robot_id = self._robot_id if self._source == "robot" else "pc-camera"
                     payload = {
                         "frame_id": frame_id,
-                        "robot_id": self._robot_id if self._source == "robot" else "pc-camera",
+                        "robot_id": robot_id,
                         "source": self._source,
                         "model_id": model_id,
                         "detections": [{k: v for k, v in d.items() if not str(k).startswith("_")} for d in detections],

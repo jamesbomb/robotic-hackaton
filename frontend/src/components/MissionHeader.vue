@@ -1,13 +1,18 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import type { CameraSource, MovementTarget, RuntimeConfigRequest, RuntimeMode } from "../types";
+import type { RuntimeConfigRequest } from "../types";
+import {
+  isPhysicalRuntime,
+  physicalRuntimePreset,
+  simulatedRuntimePreset,
+} from "../runtimePresets";
 
 const props = defineProps<{
   state: string;
-  runtimeMode: RuntimeMode;
+  runtimeMode: string;
   dryRun: boolean;
-  robotMovementTarget: MovementTarget;
-  cameraSource: CameraSource;
+  robotMovementTarget: string;
+  cameraSource: string;
   busy: boolean;
 }>();
 
@@ -17,38 +22,18 @@ const emit = defineEmits<{
   runtimeChange: [command: RuntimeConfigRequest];
 }>();
 
-const simulationEnabled = computed(() => isSimulatedMode());
+const physicalModeEnabled = computed(() =>
+  isPhysicalRuntime({
+    runtime_mode: props.runtimeMode as "mock" | "simulation" | "live",
+    dry_run: props.dryRun,
+    robot_movement_target: props.robotMovementTarget as "virtual" | "physical" | "auto" | "both",
+    camera_source: props.cameraSource as "pc" | "robot",
+  }),
+);
 
-function isSimulatedMode(
-  runtimeMode = props.runtimeMode,
-  dryRun = props.dryRun,
-  robotMovementTarget = props.robotMovementTarget,
-  cameraSource = props.cameraSource,
-) {
-  return (
-    runtimeMode !== "live" ||
-    dryRun ||
-    cameraSource !== "robot" ||
-    robotMovementTarget !== "physical"
-  );
-}
-
-function onSimulationToggle(event: Event) {
-  const enabled = (event.target as HTMLInputElement).checked;
-  applySimulationSwitch(enabled);
-}
-
-function applySimulationSwitch(enabled: boolean) {
-  emit("runtimeChange", {
-    runtime_mode: enabled ? "simulation" : "live",
-    dry_run: enabled,
-    robot_movement_target: enabled ? "virtual" : "physical",
-    camera_source: enabled ? "pc" : "robot",
-    operator_confirmed: true,
-    reason: enabled
-      ? "Operator enabled simulated mode: virtual robots and PC camera."
-      : "Operator enabled physical mode: physical robots and onboard robot cameras.",
-  });
+function onPhysicalToggle(event: Event) {
+  const physical = (event.target as HTMLInputElement).checked;
+  emit("runtimeChange", physical ? physicalRuntimePreset() : simulatedRuntimePreset());
 }
 </script>
 
@@ -61,22 +46,23 @@ function applySimulationSwitch(enabled: boolean) {
     </div>
     <div class="header-toolbar">
       <label class="runtime-toggle simulation-switch header-simulation-switch">
-        <span>Simulata</span>
+        <span>Fisico</span>
         <input
-          :checked="simulationEnabled"
+          :checked="physicalModeEnabled"
           type="checkbox"
           :disabled="busy"
-          @change="onSimulationToggle"
+          @change="onPhysicalToggle"
         />
         <span class="toggle-track"></span>
         <span class="simulation-switch-label">
-          {{ simulationEnabled ? "Virtuali / PC" : "Fisici / Robot" }}
+          {{ physicalModeEnabled ? "Robot live · camera robot" : "Simulata · PC camera" }}
         </span>
       </label>
       <div class="mission-status">
         <span class="status-pill">{{ state }}</span>
         <span class="mode-pill">{{ runtimeMode }}</span>
         <span v-if="dryRun" class="dry-run">DRY RUN</span>
+        <span v-if="physicalModeEnabled" class="mode-pill physical-pill">FISICO</span>
       </div>
       <div class="header-actions">
         <button :disabled="busy" @click="emit('start', 'FIELD')">Start Field Scan</button>

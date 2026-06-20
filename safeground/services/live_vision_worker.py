@@ -38,7 +38,7 @@ class LiveVisionWorker:
         self._loop.configure(
             source=self._current_source(),
             camera_index=camera_index,
-            robot_id=self._orchestrator.config.robot_id,
+            robot_id=self._orchestrator.vision_robot_id(),
             fetch_robot_frame=self._fetch_robot_frame,
             on_classified=self._on_classified,
         )
@@ -47,7 +47,7 @@ class LiveVisionWorker:
         self._orchestrator.event_store.emit(
             self._orchestrator._movement_feed_mission_id(),
             EventType.VISION_LOOP_STARTED,
-            robot_id=self._orchestrator.config.robot_id,
+            robot_id=self._orchestrator.vision_robot_id(),
             data=self.status(),
         )
 
@@ -58,7 +58,7 @@ class LiveVisionWorker:
             self._orchestrator.event_store.emit(
                 self._orchestrator._movement_feed_mission_id(),
                 EventType.VISION_LOOP_STOPPED,
-                robot_id=self._orchestrator.config.robot_id,
+                robot_id=self._orchestrator.vision_robot_id(),
                 data=self.status(),
             )
 
@@ -73,7 +73,7 @@ class LiveVisionWorker:
         self._loop.configure(
             source=self._current_source(),
             camera_index=camera_index,
-            robot_id=self._orchestrator.config.robot_id,
+            robot_id=self._orchestrator.vision_robot_id(),
             fetch_robot_frame=self._fetch_robot_frame,
             on_classified=self._on_classified,
         )
@@ -107,7 +107,7 @@ class LiveVisionWorker:
         self._loop.configure(
             source=self._current_source(),
             camera_index=int(os.environ.get("SAFEGROUND_VISION_CAMERA_INDEX", "0")),
-            robot_id=self._orchestrator.config.robot_id,
+            robot_id=self._orchestrator.vision_robot_id(),
             fetch_robot_frame=self._fetch_robot_frame,
             on_classified=self._on_classified,
         )

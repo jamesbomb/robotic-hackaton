@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import math
+import os
 import shutil
 from pathlib import Path
 from typing import Protocol
@@ -84,6 +86,7 @@ class MockRobotAdapter:
         self.runtime_mode = config.runtime_mode
         self.dry_run = config.dry_run
         self.mqtt_topic_prefix = config.mqtt_topic_prefix
+        self.cyberwave_config_dir = config.cyberwave_config_dir
         self.mqtt_publisher = mqtt_publisher or PahoMqttPublisher(
             host=config.mqtt_host,
             port=config.mqtt_port,
@@ -173,7 +176,7 @@ class MockRobotAdapter:
             self._apply_virtual_pose(command)
 
         if wants_physical:
-            self._publish_live_base_sequence(command, sequence)
+            physical_sequence = self._publish_live_base_sequence(command, sequence)
             return BaseMovementResult(
                 robot_id=self.id,
                 action=command.action,
@@ -183,10 +186,8 @@ class MockRobotAdapter:
                 movement_target=command.movement_target,
                 virtual_applied=wants_virtual,
                 physical_applied=True,
-                executed_sequence=[
-                    f"mqtt_publish:{step}" for step in sequence
-                ] + (sequence if wants_virtual else []),
-                reason=f"{command.reason} Published to MQTT controller policy topic.",
+                executed_sequence=physical_sequence + (sequence if wants_virtual else []),
+                reason=f"{command.reason} Sent to live Go2 controller.",
             )
 
         return BaseMovementResult(
@@ -224,25 +225,105 @@ class MockRobotAdapter:
         self,
         command: BaseMovementCommand,
         sequence: list[str],
-    ) -> None:
+    ) -> list[str]:
         topic = f"{self.mqtt_topic_prefix}/{self.id}/commands"
-        for step in sequence:
-            action = "stop" if step in {"stop_before_motion", "stop_after_motion"} else command.action.value
-            self.mqtt_publisher.publish(
-                topic,
-                {
-                    "source": "safeground",
-                    "robot_id": self.id,
-                    "runtime_mode": self.runtime_mode,
-                    "dry_run": False,
-                    "sequence_step": step,
-                    "action": action,
-                    "distance_m": command.distance_m,
-                    "angle_degrees": command.angle_degrees,
-                    "operator_id": command.operator_id,
-                    "reason": command.reason,
-                },
-            )
+        try:
+            for step in sequence:
+                action = "stop" if step in {"stop_before_motion", "stop_after_motion"} else command.action.value
+                self.mqtt_publisher.publish(
+                    topic,
+                    {
+                        "source": "safeground",
+                        "robot_id": self.id,
+                        "runtime_mode": self.runtime_mode,
+                        "dry_run": False,
+                        "sequence_step": step,
+                        "action": action,
+                        "distance_m": command.distance_m,
+                        "angle_degrees": command.angle_degrees,
+                        "operator_id": command.operator_id,
+                        "reason": command.reason,
+                    },
+                )
+            return [f"mqtt_publish:{step}" for step in sequence]
+        except Exception as mqtt_error:
+            if self.id != "go2":
+                raise
+            return self._run_go2_cyberwave_movement(command, mqtt_error)
+
+    def _run_go2_cyberwave_movement(
+        self,
+        command: BaseMovementCommand,
+        mqtt_error: Exception,
+    ) -> list[str]:
+        try:
+            from cyberwave import Cyberwave
+        except ImportError as exc:
+            raise RuntimeError("Cyberwave SDK is required for direct Go2 movement fallback.") from exc
+
+        twin_id, environment_id = self._go2_cyberwave_refs()
+        api_key = os.environ.get("CYBERWAVE_API_KEY")
+        kwargs = {}
+        if api_key:
+            kwargs["api_key"] = api_key
+        if environment_id:
+            kwargs["environment_id"] = environment_id
+
+        cw = Cyberwave(**kwargs)
+        cw.affect("live")
+        dog = (
+            cw.twin(twin_id=twin_id, environment_id=environment_id)
+            if twin_id and environment_id
+            else cw.twin("unitree/go2")
+        )
+
+        dog.publish_command("stop", source_type="tele")
+        if command.action == BaseMovementAction.MOVE_FORWARD:
+            dog.move_forward(float(command.distance_m), duration=1.0, source_type="tele")
+            movement = "move_forward"
+        elif command.action == BaseMovementAction.MOVE_BACKWARD:
+            dog.move_backward(float(command.distance_m), duration=1.0, source_type="tele")
+            movement = "move_backward"
+        elif command.action == BaseMovementAction.ROTATE_LEFT:
+            dog.turn_left(math.radians(float(command.angle_degrees)), duration=1.0, source_type="tele")
+            movement = "turn_left"
+        elif command.action == BaseMovementAction.ROTATE_RIGHT:
+            dog.turn_right(math.radians(float(command.angle_degrees)), duration=1.0, source_type="tele")
+            movement = "turn_right"
+        else:
+            raise RuntimeError(
+                f"Direct Cyberwave fallback does not support {command.action.value}; "
+                f"MQTT failed first: {mqtt_error}"
+            ) from mqtt_error
+        dog.publish_command("stop", source_type="tele")
+        return [
+            "cyberwave_direct:stop_before_motion",
+            f"cyberwave_direct:{movement}",
+            "cyberwave_direct:stop_after_motion",
+        ]
+
+    def _go2_cyberwave_refs(self) -> tuple[str | None, str | None]:
+        environment_id = os.environ.get("CYBERWAVE_ENVIRONMENT")
+        environment_path = self.cyberwave_config_dir / "environment.json"
+        if environment_id is None and environment_path.exists():
+            try:
+                raw_environment = json.loads(environment_path.read_text(encoding="utf-8"))
+                environment_id = raw_environment.get("uuid")
+            except json.JSONDecodeError:
+                environment_id = None
+
+        for path in self.cyberwave_config_dir.glob("*.json"):
+            if path.name == "environment.json":
+                continue
+            try:
+                raw_twin = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+            asset = raw_twin.get("asset", {})
+            name = f"{raw_twin.get('name', '')} {asset.get('name', '')} {asset.get('registry_id', '')}".lower()
+            if raw_twin.get("uuid", "").startswith("758bee49") or "go2" in name:
+                return raw_twin.get("uuid"), environment_id
+        return None, environment_id
 
     async def execute_manual_arm_command(self, command: ManualArmCommand) -> ManualArmResult:
         return ManualArmResult(

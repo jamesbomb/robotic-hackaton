@@ -40,6 +40,11 @@ class RecommendedAction(StrEnum):
     HUMAN_REVIEW = "HUMAN_REVIEW"
 
 
+class RouteSafetyStatus(StrEnum):
+    SAFE = "SAFE"
+    UNSAFE = "UNSAFE"
+
+
 class UserIntentType(StrEnum):
     START_MISSION = "START_MISSION"
     STOP_ALL = "STOP_ALL"
@@ -68,6 +73,11 @@ class EventType(StrEnum):
     SAFETY_CHECK_FAILED = "SAFETY_CHECK_FAILED"
     MISSION_REPORTED = "MISSION_REPORTED"
     MISSION_STOPPED = "MISSION_STOPPED"
+    ROUTE_RECORDED = "ROUTE_RECORDED"
+    ROUTE_INVALIDATED = "ROUTE_INVALIDATED"
+    ROUTE_REUSED_FOR_VERIFICATION = "ROUTE_REUSED_FOR_VERIFICATION"
+    OBSERVATION_RECORDED = "OBSERVATION_RECORDED"
+    CONSENSUS_REACHED = "CONSENSUS_REACHED"
     ERROR = "ERROR"
 
 
@@ -85,6 +95,79 @@ class SafeGroundConfig(BaseModel):
     )
     action_timeout_s: float = Field(default=2.0, gt=0.0)
     low_confidence_threshold: float = Field(default=0.4, ge=0.0, le=1.0)
+    verification_scenario: str = "MINE"
+    route_over_mine: bool = False
+
+
+class RobotPose(BaseModel):
+    x: float = 0.0
+    y: float = 0.0
+    yaw: float = 0.0
+
+
+class RobotStatus(BaseModel):
+    robot_id: str
+    role: str
+    online: bool = True
+    mode: RuntimeMode = RuntimeMode.MOCK
+    task: str = "idle"
+    battery_percent: int | None = None
+    sensors: list[str] = Field(default_factory=list)
+    actions: list[str] = Field(default_factory=list)
+    heartbeat_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    pose: RobotPose = Field(default_factory=RobotPose)
+    note: str | None = None
+
+
+class RobotCapabilityMap(BaseModel):
+    robots: list[RobotStatus] = Field(default_factory=list)
+
+
+class CommandRequest(BaseModel):
+    text: str | None = None
+    scenario: str = "MINE"
+    target_sector: str | None = None
+
+
+class Observation(BaseModel):
+    observation_id: str = Field(default_factory=lambda: f"obs-{uuid4().hex[:8]}")
+    mission_id: str
+    robot_id: str
+    sensor_id: str
+    sector: str | None = None
+    pose: RobotPose = Field(default_factory=RobotPose)
+    frame: FrameRef
+    classification: ClassificationResult
+    observed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class Finding(BaseModel):
+    finding_id: str = Field(default_factory=lambda: f"finding-{uuid4().hex[:8]}")
+    mission_id: str
+    sector: str | None = None
+    label: ClassificationLabel
+    confidence: float = Field(ge=0.0, le=1.0)
+    safe_to_contact: bool
+    observations: list[str] = Field(default_factory=list)
+    rationale: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class RoutePoint(BaseModel):
+    sector: str | None = None
+    pose: RobotPose = Field(default_factory=RobotPose)
+    note: str = "route point"
+    over_hazard: bool = False
+
+
+class RouteTrace(BaseModel):
+    route_id: str = Field(default_factory=lambda: f"route-{uuid4().hex[:8]}")
+    mission_id: str
+    robot_id: str
+    points: list[RoutePoint] = Field(default_factory=list)
+    status: RouteSafetyStatus = RouteSafetyStatus.SAFE
+    reusable_by: list[str] = Field(default_factory=list)
+    invalidation_reason: str | None = None
 
 
 class FrameRef(BaseModel):
@@ -171,3 +254,13 @@ class MissionReport(BaseModel):
     recommendation: RecommendedAction | None
     safe_to_contact: bool
     summary: str
+    observations: list[Observation] = Field(default_factory=list)
+    finding: Finding | None = None
+    route_trace: RouteTrace | None = None
+
+
+class MissionSnapshot(BaseModel):
+    mission: Mission | None = None
+    report: MissionReport | None = None
+    robots: list[RobotStatus] = Field(default_factory=list)
+    events: list[dict[str, Any]] = Field(default_factory=list)

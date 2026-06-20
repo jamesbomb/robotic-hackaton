@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from safeground.agents import CommandInterpreterAgent, OrchestratorAgent
-from safeground.adapters import MockRobotAdapter
+from safeground.adapters import build_mock_fleet
 from safeground.cv import SCENARIO_TO_FIXTURE, MockCVClient
 from safeground.event_store import JsonlEventStore
 from safeground.mission import MissionRunner
@@ -51,15 +51,21 @@ def build_parser() -> argparse.ArgumentParser:
         default="tiny",
         help="Whisper model name for --voice-wav (requires optional whisper package).",
     )
+    parser.add_argument(
+        "--route-over-mine",
+        action="store_true",
+        help="Demo flag: mark the primary route as crossing the detected mine.",
+    )
     return parser
 
 
 async def run_one(config: SafeGroundConfig, scenario: str) -> tuple[MissionReport, JsonlEventStore]:
     event_store = JsonlEventStore(config.event_log_path)
-    robot = MockRobotAdapter(config)
+    fleet = build_mock_fleet(config)
+    robot = fleet.get(config.robot_id) or fleet["go2"]
     cv_client = MockCVClient(config)
     safety = SafetyGovernor(config, event_store)
-    runner = MissionRunner(config, robot, cv_client, event_store, safety)
+    runner = MissionRunner(config, robot, cv_client, event_store, safety, fleet=fleet)
     report = await runner.run(scenario)
     return report, event_store
 
@@ -70,7 +76,10 @@ async def main_async(args: argparse.Namespace) -> int:
         command_text = transcribe_audio_file(args.voice_wav, model_name=args.whisper_model)
 
     if command_text:
-        config = SafeGroundConfig(event_log_path=args.event_log)
+        config = SafeGroundConfig(
+            event_log_path=args.event_log,
+            route_over_mine=args.route_over_mine,
+        )
         report, event_store = await run_command(config, command_text, args.scenario)
         print(json.dumps(report.model_dump(mode="json"), indent=2))
         print(f"event_log={args.event_log}")
@@ -84,7 +93,10 @@ async def main_async(args: argparse.Namespace) -> int:
     all_events = []
 
     for scenario in scenarios:
-        config = SafeGroundConfig(event_log_path=args.event_log)
+        config = SafeGroundConfig(
+            event_log_path=args.event_log,
+            route_over_mine=args.route_over_mine,
+        )
         report, event_store = await run_one(config, scenario)
         reports.append(report)
         all_events.extend(event_store.events)
@@ -105,10 +117,11 @@ async def run_command(
     fallback_scenario: str,
 ) -> tuple[MissionReport, JsonlEventStore]:
     event_store = JsonlEventStore(config.event_log_path)
-    robot = MockRobotAdapter(config)
+    fleet = build_mock_fleet(config)
+    robot = fleet.get(config.robot_id) or fleet["go2"]
     cv_client = MockCVClient(config)
     safety = SafetyGovernor(config, event_store)
-    runner = MissionRunner(config, robot, cv_client, event_store, safety)
+    runner = MissionRunner(config, robot, cv_client, event_store, safety, fleet=fleet)
 
     event_store.emit(
         runner.mission.mission_id,
@@ -146,7 +159,7 @@ async def run_command(
         scenario = decision.scenario_hint or fallback_scenario
         if scenario == "ALL":
             scenario = "MINE"
-        report = await runner.run(scenario)
+        report = await runner.run(scenario, target_sector=decision.target_sector)
         return report, event_store
 
     report = runner._build_report(summary="Command requires human review; no mission was started.")

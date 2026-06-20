@@ -64,6 +64,35 @@ Aggiungere `--print-events` per vedere la timeline completa:
 .venv/bin/python -m safeground.cli --scenario UNCERTAIN --print-events
 ```
 
+## Safe Route E Seconda Verifica
+
+Ogni missione mock registra la traccia seguita dal robot primario come `route_trace` nel report e come evento `ROUTE_RECORDED` nel log.
+
+Per i casi `UNCERTAIN`, il robot di verifica usa quella route se e' ancora `SAFE`:
+
+```bash
+.venv/bin/python -m safeground.cli \
+  --command "ispeziona settore B2 con scenario dubbio" \
+  --print-events
+```
+
+Eventi attesi:
+
+- `ROUTE_RECORDED`;
+- `ROUTE_REUSED_FOR_VERIFICATION`;
+- `CONSENSUS_REACHED`.
+
+Per simulare il caso in cui un robot mobile passa sopra una mina, usare:
+
+```bash
+.venv/bin/python -m safeground.cli \
+  --scenario MINE \
+  --route-over-mine \
+  --print-events
+```
+
+In questo caso la route viene marcata `UNSAFE`, svuotata da `reusable_by`, ed emette `ROUTE_INVALIDATED`. L'eccezione SO-101 e' modellata: il braccio non invalida una route di locomozione per passaggio sopra mina.
+
 ## Log Eventi Dedicato
 
 Per non appendere al log standard:
@@ -203,6 +232,8 @@ OK
 - Il `SafetyGovernor` applica allow-list e timeout prima degli adapter.
 - Stop testuale/vocale deve restare il percorso piu' diretto possibile.
 - Oggetti `MINE` o `UNCERTAIN` non devono essere toccati.
+- Le route primarie sono riusabili dai robot di verifica solo se restano `SAFE`.
+- Una route viene invalidata se un robot mobile, escluso SO-101, passa sopra una mina confermata.
 
 ## Troubleshooting
 

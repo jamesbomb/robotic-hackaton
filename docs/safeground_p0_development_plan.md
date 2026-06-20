@@ -284,6 +284,9 @@ Safety invariants:
 
 - No command may contact a target.
 - No SO101 interaction with `MINE` or `UNCERTAIN` targets.
+- Mobile robot traces are recorded as safe routes by default.
+- A safe route is invalidated only when a mobile robot, excluding SO101, crosses a confirmed `MINE`.
+- Verification robots must follow an existing safe route when performing second observations.
 - No acrobatics, jumps, backflips, or unconstrained locomotion.
 - One active locomotion command per robot at most.
 - Stop is issued before and after any live movement.
@@ -307,6 +310,7 @@ Deliverables:
 
 - Append-only event log using JSONL or SQLite.
 - Store mission ID, event type, timestamp, robot ID, sensor ID, frame path, classification, rationale/evidence, safety decision, and errors.
+- Store route traces, route safety status, invalidation reason, and route reuse for second verification.
 - Emit events to the dashboard through polling, SSE, or WebSocket.
 - Keep captured images in a predictable local folder for replay/debug.
 
@@ -323,6 +327,9 @@ SAFETY_CHECK_PASSED
 SAFETY_CHECK_FAILED
 MISSION_REPORTED
 MISSION_STOPPED
+ROUTE_RECORDED
+ROUTE_INVALIDATED
+ROUTE_REUSED_FOR_VERIFICATION
 ERROR
 ```
 

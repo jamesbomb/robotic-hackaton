@@ -60,9 +60,11 @@ Una zona di prova contiene:
    - opzionalmente attiva il Marker Agent.
 6. Se NOT_MINE:
    - registra l’osservazione;
+   - registra la traccia percorsa come route safe riusabile;
    - prosegue.
 7. Se UNCERTAIN:
    - Orchestrator assegna la verifica a UGV Beast;
+   - UGV usa la route safe del robot primario per raggiungere il settore;
    - UGV raggiunge un punto di osservazione alternativo;
    - acquisisce un secondo frame;
    - Verification Agent fonde le due osservazioni.
@@ -383,6 +385,10 @@ Regole minime:
 
 - emergency stop sempre disponibile;
 - nessun contatto con target sospetto;
+- ogni robot mobile registra la traccia percorsa come audit trail;
+- una traccia e' considerata safe e riusabile finche' non attraversa una mina confermata;
+- se un robot mobile passa sopra una mina, la traccia viene invalidata e non puo' essere usata da altri robot;
+- SO101 e' escluso dalla regola di locomozione sopra mina perche' e' un braccio fisso/marker agent, ma resta soggetto al divieto di contatto con `MINE` e `UNCERTAIN`;
 - velocità massima per robot;
 - timeout per ogni movimento;
 - allowlist di azioni;

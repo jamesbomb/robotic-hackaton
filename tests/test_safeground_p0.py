@@ -16,10 +16,12 @@ from safeground.models import (
     EventType,
     MissionState,
     RecommendedAction,
+    RouteSafetyStatus,
     SafeGroundConfig,
     UserIntentType,
 )
 from safeground.safety import SafetyGovernor
+from safeground.services.orchestrator_service import OrchestratorService
 
 
 class SafeGroundP0Tests(unittest.TestCase):
@@ -115,10 +117,101 @@ class SafeGroundP0Tests(unittest.TestCase):
 
         self.assertEqual(report.state, MissionState.REPORT)
         self.assertIsNotNone(report.classification)
-        self.assertEqual(report.classification.label, ClassificationLabel.UNCERTAIN)
+        self.assertEqual(report.classification.label, ClassificationLabel.MINE)
+        self.assertEqual(len(report.observations), 2)
+        self.assertIsNotNone(report.route_trace)
+        self.assertEqual(report.route_trace.status, RouteSafetyStatus.SAFE)
         event_types = [event.event_type for event in events]
         self.assertIn(EventType.AGENT_INTENT_PARSED, event_types)
         self.assertIn(EventType.AGENT_DECISION_MADE, event_types)
+        self.assertIn(EventType.OBSERVATION_RECORDED, event_types)
+        self.assertIn(EventType.ROUTE_REUSED_FOR_VERIFICATION, event_types)
+        self.assertIn(EventType.CONSENSUS_REACHED, event_types)
+
+    def test_uncertain_with_fleet_requests_second_observation(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                from safeground.adapters import build_mock_fleet
+
+                config = self.config(tmpdir)
+                event_store = JsonlEventStore(config.event_log_path)
+                fleet = build_mock_fleet(config)
+                runner = MissionRunner(
+                    config,
+                    fleet["go2"],
+                    MockCVClient(config),
+                    event_store,
+                    SafetyGovernor(config, event_store),
+                    fleet=fleet,
+                )
+                report = await runner.run("UNCERTAIN")
+                return report, event_store.events
+
+        report, events = asyncio.run(_run())
+
+        self.assertEqual(report.state, MissionState.REPORT)
+        self.assertIsNotNone(report.classification)
+        self.assertEqual(report.classification.label, ClassificationLabel.MINE)
+        self.assertEqual(report.observations[0].robot_id, "go2")
+        self.assertEqual(report.observations[1].robot_id, "ugv-beast")
+        self.assertIsNotNone(report.finding)
+        self.assertIsNotNone(report.route_trace)
+        self.assertEqual(report.route_trace.status, RouteSafetyStatus.SAFE)
+        self.assertIn("ugv-beast", report.route_trace.reusable_by)
+        event_types = [event.event_type for event in events]
+        self.assertIn(EventType.ROUTE_RECORDED, event_types)
+        self.assertIn(EventType.ROUTE_REUSED_FOR_VERIFICATION, event_types)
+        self.assertIn(EventType.CONSENSUS_REACHED, event_types)
+
+    def test_mobile_route_over_mine_is_invalidated(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                config = SafeGroundConfig(
+                    event_log_path=Path(tmpdir) / "events.jsonl",
+                    route_over_mine=True,
+                )
+                event_store = JsonlEventStore(config.event_log_path)
+                runner = MissionRunner(
+                    config,
+                    MockRobotAdapter(config),
+                    MockCVClient(config),
+                    event_store,
+                    SafetyGovernor(config, event_store),
+                )
+                report = await runner.run("MINE", target_sector="B2")
+                return report, event_store.events
+
+        report, events = asyncio.run(_run())
+
+        self.assertIsNotNone(report.route_trace)
+        self.assertEqual(report.route_trace.status, RouteSafetyStatus.UNSAFE)
+        self.assertEqual(report.route_trace.reusable_by, [])
+        self.assertIn(EventType.ROUTE_INVALIDATED, [event.event_type for event in events])
+
+    def test_so101_route_over_mine_is_not_invalidated(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                config = SafeGroundConfig(
+                    event_log_path=Path(tmpdir) / "events.jsonl",
+                    robot_id="so101",
+                    route_over_mine=True,
+                )
+                event_store = JsonlEventStore(config.event_log_path)
+                runner = MissionRunner(
+                    config,
+                    MockRobotAdapter(config),
+                    MockCVClient(config),
+                    event_store,
+                    SafetyGovernor(config, event_store),
+                )
+                report = await runner.run("MINE", target_sector="B2")
+                return report, event_store.events
+
+        report, events = asyncio.run(_run())
+
+        self.assertIsNotNone(report.route_trace)
+        self.assertEqual(report.route_trace.status, RouteSafetyStatus.SAFE)
+        self.assertNotIn(EventType.ROUTE_INVALIDATED, [event.event_type for event in events])
 
     def test_stop_command_bypasses_mission_run(self) -> None:
         async def _run():
@@ -137,6 +230,31 @@ class SafeGroundP0Tests(unittest.TestCase):
         intent = CommandInterpreterAgent().parse("raccontami una barzelletta")
 
         self.assertEqual(intent.intent, UserIntentType.UNKNOWN)
+
+    def test_orchestrator_service_exposes_fleet_snapshot_and_events(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                service = OrchestratorService(self.config(tmpdir))
+                report = await service.start_mission("UNCERTAIN")
+                snapshot = await service.snapshot()
+                return report, snapshot
+
+        report, snapshot = asyncio.run(_run())
+
+        self.assertEqual(report.state, MissionState.REPORT)
+        self.assertEqual(len(snapshot.robots), 4)
+        self.assertEqual(len(report.observations), 2)
+        self.assertTrue(snapshot.events)
+        self.assertEqual(snapshot.report, report)
+
+    def test_fastapi_app_imports_with_registered_routes(self) -> None:
+        from safeground.api.server import app
+
+        paths = {route.path for route in app.routes}
+
+        self.assertIn("/api/missions/start", paths)
+        self.assertIn("/api/robots", paths)
+        self.assertIn("/ws/events", paths)
 
 
 if __name__ == "__main__":

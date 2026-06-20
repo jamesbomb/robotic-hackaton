@@ -5,6 +5,10 @@ import re
 from safeground.models import (
     AgentDecision,
     AgentDecisionType,
+    ClassificationLabel,
+    ClassificationResult,
+    RecommendedAction,
+    RobotStatus,
     SafeGroundConfig,
     UserIntent,
     UserIntentType,
@@ -136,3 +140,96 @@ class OrchestratorAgent:
             reason=intent.reason,
             constraints={"dry_run": self.config.dry_run},
         )
+
+
+class OperatorCommandAgent(CommandInterpreterAgent):
+    """Named UI-facing command agent that reuses the safe P0 parser."""
+
+
+class MissionOrchestratorAgent(OrchestratorAgent):
+    def select_robot(self, robots: list[RobotStatus], role: str) -> str:
+        for robot in robots:
+            if robot.online and robot.role == role:
+                return robot.robot_id
+        return self.config.robot_id
+
+
+class PrimaryScoutAgent:
+    role = "Primary Scout"
+
+    def assign(self, robots: list[RobotStatus]) -> str:
+        for robot in robots:
+            if robot.online and robot.role == self.role and "capture_frame" in robot.actions:
+                return robot.robot_id
+        for robot in robots:
+            if robot.online and "capture_frame" in robot.actions:
+                return robot.robot_id
+        return "mock-ugv"
+
+
+class VerificationScoutAgent:
+    role = "Verification Scout"
+
+    def assign(self, robots: list[RobotStatus], primary_robot_id: str) -> str | None:
+        for robot in robots:
+            if (
+                robot.online
+                and robot.robot_id != primary_robot_id
+                and robot.role == self.role
+                and "capture_frame" in robot.actions
+            ):
+                return robot.robot_id
+        for robot in robots:
+            if robot.online and robot.robot_id != primary_robot_id and "capture_frame" in robot.actions:
+                return robot.robot_id
+        return None
+
+    def fuse(
+        self,
+        primary: ClassificationResult,
+        secondary: ClassificationResult,
+    ) -> ClassificationResult:
+        if secondary.label != ClassificationLabel.UNCERTAIN and secondary.confidence >= 0.75:
+            return ClassificationResult(
+                label=secondary.label,
+                confidence=secondary.confidence,
+                bbox=secondary.bbox,
+                evidence=[
+                    *primary.evidence,
+                    *secondary.evidence,
+                    "Second observation resolved the uncertain primary view.",
+                ],
+                recommended_action=RecommendedAction.REPORT,
+            )
+
+        if primary.label == secondary.label and primary.label != ClassificationLabel.UNCERTAIN:
+            return ClassificationResult(
+                label=primary.label,
+                confidence=min(primary.confidence, secondary.confidence),
+                bbox=secondary.bbox or primary.bbox,
+                evidence=[
+                    *primary.evidence,
+                    *secondary.evidence,
+                    "Primary and verification observations agree.",
+                ],
+                recommended_action=RecommendedAction.REPORT,
+            )
+
+        return ClassificationResult(
+            label=ClassificationLabel.UNCERTAIN,
+            confidence=max(primary.confidence, secondary.confidence),
+            bbox=secondary.bbox or primary.bbox,
+            evidence=[
+                *primary.evidence,
+                *secondary.evidence,
+                "Observations did not produce a safe consensus; human review required.",
+            ],
+            recommended_action=RecommendedAction.HUMAN_REVIEW,
+        )
+
+
+class MarkerAgent:
+    role = "Marker Agent"
+
+    def may_mark(self, classification: ClassificationResult) -> bool:
+        return classification.label == ClassificationLabel.NOT_MINE

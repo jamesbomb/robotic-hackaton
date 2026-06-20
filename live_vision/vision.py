@@ -355,7 +355,8 @@ def main():
         dets = VLM_DETS if VLM_ON else classify(frame)         # VLM hostato robusto  |  CV-colore live
         if DEV: draw_dev(frame)
         counts = draw(frame, dets)
-        update_map(dets, frame.shape[1], frame.shape[0])       # REASON: popola la mappa-rischio
+        if VLM_ON:                                             # mappa SOLO dal VLM (no corruzione fallback HSV)
+            update_map(dets, frame.shape[1], frame.shape[0])   # REASON: popola la mappa-rischio
         draw_minimap(frame)
         draw_vlm_status(frame)                                 # monitor back-end live (no stallo)
         dt = time.time() - t0; t0 = time.time(); fps = 0.9*fps + 0.1*(1/dt if dt else 0)

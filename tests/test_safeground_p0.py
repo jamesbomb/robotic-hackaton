@@ -14,6 +14,8 @@ from safeground.mission import MissionRunner
 from safeground.models import (
     ClassificationLabel,
     EventType,
+    ManualArmAction,
+    ManualArmCommand,
     MissionState,
     RecommendedAction,
     RouteSafetyStatus,
@@ -247,6 +249,53 @@ class SafeGroundP0Tests(unittest.TestCase):
         self.assertTrue(snapshot.events)
         self.assertEqual(snapshot.report, report)
 
+    def test_manual_so101_takeover_executes_bounded_nudge(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                service = OrchestratorService(self.config(tmpdir))
+                result = await service.manual_arm_takeover(
+                    "so101",
+                    ManualArmCommand(
+                        action=ManualArmAction.NUDGE_JOINT,
+                        operator_confirmed=True,
+                        joint_name="shoulder",
+                        delta_degrees=2.0,
+                        reason="Operator adjusts marker pose.",
+                    ),
+                )
+                status = (await service.fleet["so101"].status()).task
+                return result, status, service.events(limit=None)
+
+        result, status, events = asyncio.run(_run())
+
+        self.assertTrue(result.applied)
+        self.assertEqual(result.robot_id, "so101")
+        self.assertEqual(result.joint_positions_degrees["shoulder"], 2.0)
+        self.assertEqual(status, "human_takeover")
+        event_types = [event.event_type for event in events]
+        self.assertIn(EventType.MANUAL_ARM_COMMAND_REQUESTED, event_types)
+        self.assertIn(EventType.SAFETY_CHECK_PASSED, event_types)
+        self.assertIn(EventType.MANUAL_ARM_COMMAND_APPLIED, event_types)
+
+    def test_manual_so101_marker_requires_not_mine_target(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                service = OrchestratorService(self.config(tmpdir))
+                with self.assertRaises(PermissionError):
+                    await service.manual_arm_takeover(
+                        "so101",
+                        ManualArmCommand(
+                            action=ManualArmAction.PLACE_SAFE_MARKER,
+                            operator_confirmed=True,
+                            target_label=ClassificationLabel.MINE,
+                        ),
+                    )
+                return service.events(limit=None)
+
+        events = asyncio.run(_run())
+
+        self.assertIn(EventType.SAFETY_CHECK_FAILED, [event.event_type for event in events])
+
     def test_fastapi_app_imports_with_registered_routes(self) -> None:
         from safeground.api.server import app
 
@@ -254,6 +303,7 @@ class SafeGroundP0Tests(unittest.TestCase):
 
         self.assertIn("/api/missions/start", paths)
         self.assertIn("/api/robots", paths)
+        self.assertIn("/api/robots/{robot_id}/manual-arm", paths)
         self.assertIn("/ws/events", paths)
 
 

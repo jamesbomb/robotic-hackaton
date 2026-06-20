@@ -1,5 +1,7 @@
 safeground_runs/
 node_modules/
+frontend/dist/
+*.egg-info/
 
 __pycache__/
 *.py[cod]

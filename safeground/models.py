@@ -21,6 +21,7 @@ class MissionState(StrEnum):
     CLASSIFY = "CLASSIFY"
     REPORT = "REPORT"
     MANUAL_STOP = "MANUAL_STOP"
+    MANUAL_TAKEOVER = "MANUAL_TAKEOVER"
     ERROR_SAFE = "ERROR_SAFE"
     UNCERTAIN = "UNCERTAIN"
     SECOND_OBSERVATION = "SECOND_OBSERVATION"
@@ -32,6 +33,13 @@ class ClassificationLabel(StrEnum):
     MINE = "MINE"
     NOT_MINE = "NOT_MINE"
     UNCERTAIN = "UNCERTAIN"
+
+
+class ManualArmAction(StrEnum):
+    HOME = "home"
+    HOLD_POSITION = "hold_position"
+    NUDGE_JOINT = "nudge_joint"
+    PLACE_SAFE_MARKER = "place_safe_marker"
 
 
 class RecommendedAction(StrEnum):
@@ -73,6 +81,8 @@ class EventType(StrEnum):
     SAFETY_CHECK_FAILED = "SAFETY_CHECK_FAILED"
     MISSION_REPORTED = "MISSION_REPORTED"
     MISSION_STOPPED = "MISSION_STOPPED"
+    MANUAL_ARM_COMMAND_REQUESTED = "MANUAL_ARM_COMMAND_REQUESTED"
+    MANUAL_ARM_COMMAND_APPLIED = "MANUAL_ARM_COMMAND_APPLIED"
     ROUTE_RECORDED = "ROUTE_RECORDED"
     ROUTE_INVALIDATED = "ROUTE_INVALIDATED"
     ROUTE_REUSED_FOR_VERIFICATION = "ROUTE_REUSED_FOR_VERIFICATION"
@@ -91,9 +101,28 @@ class SafeGroundConfig(BaseModel):
     frame_fixture_dir: Path = Path(__file__).parent / "fixtures" / "frames"
     cv_fixture_dir: Path = Path(__file__).parent / "fixtures" / "cv"
     allowed_actions: set[str] = Field(
-        default_factory=lambda: {"capture_frame", "stop", "hold_position"}
+        default_factory=lambda: {
+            "capture_frame",
+            "stop",
+            "hold_position",
+            "manual_arm_home",
+            "manual_arm_hold_position",
+            "manual_arm_nudge_joint",
+            "manual_arm_place_safe_marker",
+        }
     )
     action_timeout_s: float = Field(default=2.0, gt=0.0)
+    manual_arm_step_limit_degrees: float = Field(default=5.0, gt=0.0)
+    so101_allowed_joints: set[str] = Field(
+        default_factory=lambda: {
+            "base",
+            "shoulder",
+            "elbow",
+            "wrist_pitch",
+            "wrist_roll",
+            "gripper",
+        }
+    )
     low_confidence_threshold: float = Field(default=0.4, ge=0.0, le=1.0)
     verification_scenario: str = "MINE"
     route_over_mine: bool = False
@@ -127,6 +156,35 @@ class CommandRequest(BaseModel):
     text: str | None = None
     scenario: str = "MINE"
     target_sector: str | None = None
+
+
+class ManualArmCommand(BaseModel):
+    action: ManualArmAction
+    operator_id: str = "operator"
+    operator_confirmed: bool = False
+    joint_name: str | None = None
+    delta_degrees: float = 0.0
+    target_label: ClassificationLabel | None = None
+    reason: str = "Manual SO-101 human takeover."
+
+    @field_validator("delta_degrees")
+    @classmethod
+    def validate_delta(cls, value: float) -> float:
+        if abs(value) > 5.0:
+            raise ValueError("manual joint nudge must stay within +/-5 degrees")
+        return value
+
+
+class ManualArmResult(BaseModel):
+    command_id: str = Field(default_factory=lambda: f"arm-command-{uuid4().hex[:8]}")
+    robot_id: str
+    action: ManualArmAction
+    applied: bool
+    dry_run: bool
+    joint_name: str | None = None
+    joint_positions_degrees: dict[str, float] = Field(default_factory=dict)
+    executed_sequence: list[str] = Field(default_factory=list)
+    reason: str
 
 
 class Observation(BaseModel):

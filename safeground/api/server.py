@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from safeground.models import CommandRequest
+from safeground.models import CommandRequest, ManualArmCommand
 from safeground.services.orchestrator_service import OrchestratorService
 
 
@@ -74,6 +74,16 @@ async def robot_capabilities(robot_id: str):
 async def stop_robot(robot_id: str):
     await service.fleet[robot_id].stop()
     return await service.robot_statuses()
+
+
+@app.post("/api/robots/{robot_id}/manual-arm")
+async def manual_arm_takeover(robot_id: str, request: ManualArmCommand):
+    if robot_id not in service.fleet:
+        raise HTTPException(status_code=404, detail="Robot not found")
+    try:
+        return await service.manual_arm_takeover(robot_id, request)
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.post("/api/robots/{robot_id}/capture")

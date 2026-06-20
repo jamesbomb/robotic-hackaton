@@ -46,6 +46,14 @@ venv:
 .venv/bin/python -m safeground.cli --voice-wav input.wav --whisper-model tiny
 ```
 
+## SO-101 Manual Takeover
+
+The ops console exposes bounded human takeover controls for the SO-101 mock arm:
+`home`, `hold_position`, small `nudge_joint` steps, and a prevalidated
+`place_safe_marker` preset for `NOT_MINE` targets only. The matching API endpoint
+is `POST /api/robots/so101/manual-arm`; every command requires
+`operator_confirmed=true` and is written to the JSONL audit log.
+
 The default event log is append-only JSONL at `safeground_runs/events.jsonl`.
 Captured mock frames are copied to `safeground_runs/frames/`.
 

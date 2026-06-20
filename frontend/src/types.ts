@@ -4,6 +4,7 @@ export type MissionState =
   | "CLASSIFY"
   | "REPORT"
   | "MANUAL_STOP"
+  | "MANUAL_TAKEOVER"
   | "ERROR_SAFE"
   | "UNCERTAIN"
   | "SECOND_OBSERVATION"
@@ -11,6 +12,7 @@ export type MissionState =
   | "HUMAN_REVIEW";
 
 export type ClassificationLabel = "MINE" | "NOT_MINE" | "UNCERTAIN";
+export type ManualArmAction = "home" | "hold_position" | "nudge_joint" | "place_safe_marker";
 
 export interface RobotPose {
   x: number;
@@ -30,6 +32,28 @@ export interface RobotStatus {
   heartbeat_at: string;
   pose: RobotPose;
   note: string | null;
+}
+
+export interface ManualArmCommandRequest {
+  action: ManualArmAction;
+  operator_id?: string;
+  operator_confirmed: boolean;
+  joint_name?: string | null;
+  delta_degrees?: number;
+  target_label?: ClassificationLabel | null;
+  reason?: string;
+}
+
+export interface ManualArmResult {
+  command_id: string;
+  robot_id: string;
+  action: ManualArmAction;
+  applied: boolean;
+  dry_run: boolean;
+  joint_name: string | null;
+  joint_positions_degrees: Record<string, number>;
+  executed_sequence: string[];
+  reason: string;
 }
 
 export interface FrameRef {

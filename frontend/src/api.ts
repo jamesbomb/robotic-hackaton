@@ -1,4 +1,11 @@
-import type { EventRecord, MissionReport, MissionSnapshot, RobotStatus } from "./types";
+import type {
+  EventRecord,
+  ManualArmCommandRequest,
+  ManualArmResult,
+  MissionReport,
+  MissionSnapshot,
+  RobotStatus,
+} from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -38,6 +45,13 @@ export function sendCommand(text: string, scenario: string) {
   return request<MissionReport>("/api/commands", {
     method: "POST",
     body: JSON.stringify({ text, scenario }),
+  });
+}
+
+export function sendManualArmCommand(robotId: string, command: ManualArmCommandRequest) {
+  return request<ManualArmResult>(`/api/robots/${robotId}/manual-arm`, {
+    method: "POST",
+    body: JSON.stringify(command),
   });
 }
 

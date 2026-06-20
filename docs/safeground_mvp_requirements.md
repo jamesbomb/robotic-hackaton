@@ -377,6 +377,14 @@ Responsabilità:
 - tornare in home;
 - non avvicinare il braccio a oggetti sospetti.
 
+Takeover umano SO101:
+
+- la dashboard può mettere il braccio in modalità `human takeover`;
+- l'operatore può inviare solo azioni discrete e bounded: `home`, `hold_position`, `nudge_joint`, `place_safe_marker`;
+- ogni `nudge_joint` è limitato a un piccolo delta e a giunti allow-listati;
+- `place_safe_marker` è consentito solo su target `NOT_MINE` e usa una posa prevalidata fuori dalla zona di rischio;
+- ogni comando richiede conferma operatore e viene registrato nell'event log.
+
 ### 7.5 Safety Governor
 
 Componente deterministico, non LLM.
@@ -516,6 +524,14 @@ Per ogni robot:
   - human takeover;
   - idle;
   - error.
+
+#### SO101 human takeover
+
+- pannello dedicato visibile dalla dashboard;
+- pulsanti `Home`, `Hold`, `Safe Marker`;
+- selezione giunto e step bounded per piccoli aggiustamenti manuali;
+- nessun comando raw libero verso i giunti;
+- risultato comando e safety check visibili nella timeline.
 
 #### Camera panel
 

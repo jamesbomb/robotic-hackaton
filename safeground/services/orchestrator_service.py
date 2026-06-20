@@ -9,8 +9,11 @@ from safeground.models import (
     AgentDecisionType,
     CommandRequest,
     EventType,
+    ManualArmCommand,
+    ManualArmResult,
     MissionReport,
     MissionSnapshot,
+    MissionState,
     RobotStatus,
     SafeGroundConfig,
 )
@@ -40,6 +43,38 @@ class OrchestratorService:
         report = await runner.stop()
         self.latest_report = report
         return report
+
+    async def manual_arm_takeover(
+        self,
+        robot_id: str,
+        command: ManualArmCommand,
+    ) -> ManualArmResult:
+        runner = self.active_runner or self._build_runner()
+        self.active_runner = runner
+        robot = self.fleet[robot_id]
+
+        self.event_store.emit(
+            runner.mission.mission_id,
+            EventType.MANUAL_ARM_COMMAND_REQUESTED,
+            state=runner.mission.state,
+            robot_id=robot.id,
+            data=command.model_dump(mode="json"),
+        )
+        await runner._transition(MissionState.MANUAL_TAKEOVER)
+        result = await runner.safety.run_manual_arm_checked(
+            runner.mission,
+            robot.id,
+            command,
+            lambda: robot.execute_manual_arm_command(command),
+        )
+        self.event_store.emit(
+            runner.mission.mission_id,
+            EventType.MANUAL_ARM_COMMAND_APPLIED,
+            state=runner.mission.state,
+            robot_id=robot.id,
+            data=result.model_dump(mode="json"),
+        )
+        return result
 
     async def run_command(self, request: CommandRequest) -> MissionReport:
         text = request.text or ""

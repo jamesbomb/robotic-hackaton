@@ -22,6 +22,7 @@ body {
 
 button,
 select,
+input,
 textarea {
   font: inherit;
 }
@@ -54,6 +55,7 @@ button.full {
 }
 
 textarea,
+input,
 select {
   width: 100%;
   border: 1px solid rgba(148, 163, 184, 0.25);
@@ -328,6 +330,35 @@ small {
 .command-palette {
   display: grid;
   gap: 0.65rem;
+}
+
+.manual-arm-panel {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.manual-arm-panel p {
+  margin: 0;
+  color: #9db4ac;
+}
+
+.manual-arm-panel label,
+.manual-arm-nudge {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.manual-arm-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+}
+
+.manual-arm-nudge {
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 12px;
+  padding: 0.7rem;
+  background: rgba(2, 6, 10, 0.35);
 }
 
 .safety-grid {

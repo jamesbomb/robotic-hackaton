@@ -5,7 +5,16 @@ from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
-from safeground.models import FrameRef, RobotPose, RobotStatus, RuntimeMode, SafeGroundConfig
+from safeground.models import (
+    FrameRef,
+    ManualArmAction,
+    ManualArmCommand,
+    ManualArmResult,
+    RobotPose,
+    RobotStatus,
+    RuntimeMode,
+    SafeGroundConfig,
+)
 
 
 class RobotAdapter(Protocol):
@@ -25,6 +34,8 @@ class RobotAdapter(Protocol):
     async def hold_position(self) -> None: ...
 
     async def stop(self) -> None: ...
+
+    async def execute_manual_arm_command(self, command: ManualArmCommand) -> ManualArmResult: ...
 
 
 class MockRobotAdapter:
@@ -108,6 +119,84 @@ class MockRobotAdapter:
         self.task = "stopped"
         return None
 
+    async def execute_manual_arm_command(self, command: ManualArmCommand) -> ManualArmResult:
+        return ManualArmResult(
+            robot_id=self.id,
+            action=command.action,
+            applied=False,
+            dry_run=True,
+            reason=f"{self.id} does not expose SO-101 manual arm control.",
+        )
+
+
+class MockSO101ArmAdapter(MockRobotAdapter):
+    def __init__(self, config: SafeGroundConfig) -> None:
+        super().__init__(
+            config,
+            robot_id="so101",
+            role="Marker Agent",
+            sensor_id="so101-wrist-camera",
+            sensors=["joint_states", "so101-wrist-camera"],
+            actions=[
+                "stop",
+                "hold_position",
+                "manual_arm_home",
+                "manual_arm_hold_position",
+                "manual_arm_nudge_joint",
+                "manual_arm_place_safe_marker",
+            ],
+            pose=RobotPose(x=0.0, y=1.2, yaw=0.0),
+            battery_percent=None,
+            note="Mock SO-101 marker agent; human takeover uses bounded dry-run commands.",
+        )
+        self.joint_positions_degrees = {joint: 0.0 for joint in config.so101_allowed_joints}
+
+    async def capabilities(self) -> dict:
+        capabilities = await super().capabilities()
+        capabilities["manual_arm"] = {
+            "joints": sorted(self.joint_positions_degrees),
+            "max_step_degrees": 5.0,
+            "requires_operator_confirmation": True,
+            "safe_marker_only": True,
+        }
+        capabilities["unsupported_p0_actions"] = []
+        return capabilities
+
+    async def execute_manual_arm_command(self, command: ManualArmCommand) -> ManualArmResult:
+        self.task = "human_takeover"
+        sequence: list[str]
+
+        if command.action == ManualArmAction.HOME:
+            self.joint_positions_degrees = {
+                joint: 0.0 for joint in self.joint_positions_degrees
+            }
+            sequence = ["stop", "home"]
+        elif command.action == ManualArmAction.HOLD_POSITION:
+            sequence = ["hold_position"]
+        elif command.action == ManualArmAction.NUDGE_JOINT and command.joint_name is not None:
+            self.joint_positions_degrees[command.joint_name] += command.delta_degrees
+            sequence = [f"nudge:{command.joint_name}:{command.delta_degrees:+.1f}deg"]
+        elif command.action == ManualArmAction.PLACE_SAFE_MARKER:
+            sequence = [
+                "stop",
+                "move_to_prevalidated_safe_marker_pose",
+                "release_marker",
+                "home",
+            ]
+        else:
+            sequence = ["rejected_by_adapter"]
+
+        return ManualArmResult(
+            robot_id=self.id,
+            action=command.action,
+            applied=sequence != ["rejected_by_adapter"],
+            dry_run=True,
+            joint_name=command.joint_name,
+            joint_positions_degrees=dict(sorted(self.joint_positions_degrees.items())),
+            executed_sequence=sequence,
+            reason=command.reason,
+        )
+
 
 def build_mock_fleet(config: SafeGroundConfig) -> dict[str, RobotAdapter]:
     return {
@@ -131,17 +220,7 @@ def build_mock_fleet(config: SafeGroundConfig) -> dict[str, RobotAdapter]:
             battery_percent=92,
             note="Mock UGV Beast verifier; dry-run only.",
         ),
-        "so101": MockRobotAdapter(
-            config,
-            robot_id="so101",
-            role="Marker Agent",
-            sensor_id="so101-wrist-camera",
-            sensors=["joint_states", "so101-wrist-camera"],
-            actions=["stop", "hold_position"],
-            pose=RobotPose(x=0.0, y=1.2, yaw=0.0),
-            battery_percent=None,
-            note="Mock SO-101 marker agent; marker motion disabled in P0.",
-        ),
+        "so101": MockSO101ArmAdapter(config),
         "fixed-camera": MockRobotAdapter(
             config,
             robot_id="fixed-camera",

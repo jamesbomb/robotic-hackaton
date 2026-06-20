@@ -109,6 +109,35 @@ def draw_dev(frame):
         cv2.line(frame, (0, int(h*f/10)), (w, int(h*f/10)), grid, 1, cv2.LINE_AA)
     cv2.drawMarker(frame, (w//2, h//2), (150, 190, 230), cv2.MARKER_CROSS, 26, 1, cv2.LINE_AA)
 
+# ── REASON: rischio -> azione + mappa-rischio che si popola ───────────────
+ACTION_OF = {"SAFE": "LASCIA", "DANGER": "RIMUOVI", "AVOID": "EVITA+TRACCIA"}
+GRID_COLS, GRID_ROWS = 9, 6
+RISK_RANK = {"SAFE": 1, "AVOID": 2, "DANGER": 3}    # tieni il piu' pericoloso per cella
+RISK_COL = {"SAFE": (90, 210, 90), "DANGER": (60, 60, 230), "AVOID": (200, 170, 110)}
+MAP = {}                                            # (col,row) -> risk (memoria del cane)
+
+def update_map(dets, w, h):
+    for d in dets:
+        cx, cy = d["center"]
+        c = min(GRID_COLS-1, max(0, int(cx / w * GRID_COLS)))
+        r = min(GRID_ROWS-1, max(0, int(cy / h * GRID_ROWS)))
+        cur = MAP.get((c, r))
+        if cur is None or RISK_RANK[d["risk"]] > RISK_RANK[cur]:
+            MAP[(c, r)] = d["risk"]
+
+def draw_minimap(frame):
+    h, w = frame.shape[:2]
+    mw, mh = 198, 126; x0, y0 = 12, h - mh - 46
+    shade(frame, x0 - 6, y0 - 24, x0 + mw + 8, y0 + mh + 8, alpha=0.6)
+    text(frame, "MAPPA RISCHIO", (x0, y0 - 7), 0.45, INK, 1)
+    cwc, chc = mw // GRID_COLS, mh // GRID_ROWS
+    for c in range(GRID_COLS):
+        for r in range(GRID_ROWS):
+            x, y = x0 + c*cwc, y0 + r*chc
+            risk = MAP.get((c, r))
+            if risk: cv2.rectangle(frame, (x, y), (x+cwc-1, y+chc-1), RISK_COL[risk], -1)
+            cv2.rectangle(frame, (x, y), (x+cwc-1, y+chc-1), (60, 64, 72), 1)
+
 def draw(frame, dets):
     h, w = frame.shape[:2]; counts = {"SAFE": 0, "DANGER": 0, "AVOID": 0}
     for d in dets:
@@ -117,10 +146,8 @@ def draw(frame, dets):
         cv2.rectangle(frame, (x, y), (x + bw, y + bh), col, 2, cv2.LINE_AA)
         cv2.circle(frame, (cx, cy), 4, col, -1, cv2.LINE_AA)
         ly = y - 10 if y > 50 else y + bh + 22
-        text(frame, f'{d["risk"]}  {int(d["confidence"]*100)}%', (x, ly), 0.6, col, 2)
+        text(frame, f'{d["risk"]} {int(d["confidence"]*100)}%  ->  {ACTION_OF[d["risk"]]}', (x, ly), 0.55, col, 2)
         cv2.rectangle(frame, (x, ly + 4), (x + int(bw * d["confidence"]), ly + 8), col, -1)
-        if DEV:
-            text(frame, f"({round(cx/w,3)},{round(cy/h,3)})  {bw}x{bh}", (x, min(y+bh+16, h-6)), 0.42, (210, 215, 225), 1)
     return counts
 
 def hud(frame, counts, cam_idx, fps, calmsg):
@@ -238,9 +265,46 @@ def save_calib():
                for k, v in CAL.items()}, open(CALIB_FILE, "w"))
     print("[train] salvato calib.json")
 
+# ╔══ SORGENTE DEL FRAME — l'UNICO punto dove scegli da dove arriva l'immagine ══╗
+#   "camera" → camera locale (webcam / USB). Indice CAMERA_INDEX (0,1,2…); 'c' cicla.
+#   "go2"    → camera del robot Unitree Go2 via Cyberwave (frame dal twin).
+# Cambia SOURCE/CAMERA_INDEX qui sotto, oppure passa --cam N da riga di comando.
+SOURCE = "camera"
+CAMERA_INDEX = 0
+# La sorgente Go2 reale (env del team — twin "Unitree Go2"):
+GO2_TWIN_ID = "758bee49-6668-4733-80f8-da1c0a7134b2"
+GO2_ENV_ID  = "70482104-4736-49df-adc3-06696f906b1f"
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
 def open_cam(idx):
     cap = cv2.VideoCapture(idx); return cap if cap.isOpened() else None
-    # DOMANI Go2: frame = go2.capture_frame("numpy")  (stessa firma)
+
+def open_go2():
+    """Frame dal robot Go2 — read() -> (ok, frame_bgr). Lo swap è SOLO questa funzione.
+
+    Feed reale (notebook del cane): `dog.get_latest_frame()` -> bytes JPEG
+    (richiede `pip install cyberwave[camera]`, stack WebRTC aiortc/av).
+    cv2.imdecode decodifica in BGR -> niente swap R/B. NON usare PIL (darebbe RGB
+    e falserebbe arancione/verde nella classificazione colore)."""
+    from cyberwave import Cyberwave
+    from cw_vision import _api_key
+    cw = Cyberwave(api_key=_api_key()); cw.affect("live")
+    dog = cw.twin(twin_id=GO2_TWIN_ID, environment_id=GO2_ENV_ID)
+
+    def _read():
+        if hasattr(dog, "get_latest_frame"):
+            b = dog.get_latest_frame()
+            if not b:
+                return (False, None)
+            f = cv2.imdecode(np.frombuffer(b, np.uint8), cv2.IMREAD_COLOR)   # -> BGR
+            return (f is not None, f)
+        f = dog.capture_frame("numpy")                                       # fallback
+        return (f is not None, f)
+
+    class _Go2Src:
+        def read(self): return _read()
+        def release(self): pass
+    return _Go2Src()
 
 # ── SENSE HOSTATO: VLM Cyberwave in background + MONITOR back-end (tasto V) ─
 VLM_ON = False; VLM_DETS = []; LATEST_FRAME = None
@@ -288,10 +352,13 @@ def draw_vlm_status(frame):
 
 def main():
     global LATEST_HSV, TRAIN, ACTIVE
-    cam_idx = int(sys.argv[sys.argv.index("--cam") + 1]) if "--cam" in sys.argv else 0
-    cap = open_cam(cam_idx)
+    cam_idx = int(sys.argv[sys.argv.index("--cam") + 1]) if "--cam" in sys.argv else CAMERA_INDEX
+    if SOURCE == "go2":
+        cap = open_go2(); cam_idx = -1                 # frame dal robot: 'c' disattivo
+    else:
+        cap = open_cam(cam_idx)
     if cap is None:
-        print("camera non apre. --cam 1 per iPhone. (Privacy>Fotocamera).", file=sys.stderr); sys.exit(1)
+        print("camera non apre. Cambia CAMERA_INDEX o passa --cam N. (macOS: Privacy > Fotocamera).", file=sys.stderr); sys.exit(1)
     win = "vision - quello che vede il robot"
     cv2.namedWindow(win, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(win, WCAM + WPANEL, 540)   # finestra = canvas esatto -> niente barra grigia, click 1:1
@@ -308,6 +375,9 @@ def main():
         dets = VLM_DETS if VLM_ON else classify(frame)         # VLM hostato robusto  |  CV-colore live
         if DEV: draw_dev(frame)
         counts = draw(frame, dets)
+        if VLM_ON:                                             # mappa SOLO dal VLM (no corruzione fallback HSV)
+            update_map(dets, frame.shape[1], frame.shape[0])   # REASON: popola la mappa-rischio
+        draw_minimap(frame)
         draw_vlm_status(frame)                                 # monitor back-end live (no stallo)
         dt = time.time() - t0; t0 = time.time(); fps = 0.9*fps + 0.1*(1/dt if dt else 0)
         hud(frame, counts, cam_idx, fps, "")
@@ -335,8 +405,9 @@ def main():
             ts = int(time.time()); cv2.imwrite(f"/tmp/vision_{ts}.png", frame)
             print(json.dumps({"frame_id": f"cam-{ts}", "detections":
                   [{kk: vv for kk, vv in d.items() if not kk.startswith("_")} for d in dets]}, ensure_ascii=False))
+        elif k == ord("m"): MAP.clear(); print("[map] mappa-rischio azzerata")
         elif k == ord("d"): globals()["DEV"] = not DEV
-        elif k == ord("c"):
+        elif k == ord("c") and cam_idx >= 0:           # cicla camere (solo sorgente locale)
             cap.release()
             for j in range(1, 5):
                 c2 = open_cam((cam_idx + j) % 5)

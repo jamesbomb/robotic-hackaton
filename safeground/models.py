@@ -58,6 +58,11 @@ class MovementTarget(StrEnum):
     BOTH = "both"
 
 
+class CameraSource(StrEnum):
+    PC = "pc"
+    ROBOT = "robot"
+
+
 class RobotActivationMode(StrEnum):
     READY = "ready"
     ARMED = "armed"
@@ -190,6 +195,8 @@ class SafeGroundConfig(BaseModel):
     mqtt_qos: int = Field(default=1, ge=0, le=2)
     mqtt_timeout_s: float = Field(default=2.0, gt=0.0)
     cyberwave_virtual_sync: bool = True
+    robot_movement_target: MovementTarget = MovementTarget.VIRTUAL
+    camera_source: CameraSource = CameraSource.PC
 
 
 class RobotPose(BaseModel):
@@ -225,6 +232,8 @@ class CommandRequest(BaseModel):
 class RuntimeConfigRequest(BaseModel):
     runtime_mode: RuntimeMode = RuntimeMode.MOCK
     dry_run: bool = True
+    robot_movement_target: MovementTarget | None = None
+    camera_source: CameraSource | None = None
     operator_id: str = "operator"
     operator_confirmed: bool = False
     reason: str = "Operator runtime mode change."
@@ -233,6 +242,8 @@ class RuntimeConfigRequest(BaseModel):
 class RuntimeStatus(BaseModel):
     runtime_mode: RuntimeMode
     dry_run: bool
+    robot_movement_target: MovementTarget = MovementTarget.VIRTUAL
+    camera_source: CameraSource = CameraSource.PC
     live_adapter_ready: bool = False
     note: str = "Mock adapters are active; no hardware commands are sent."
 

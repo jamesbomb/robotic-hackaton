@@ -2,13 +2,36 @@
 
 ## Goal
 
-Build the smallest repeatable SafeGround demo that proves the loop:
+Define the smallest repeatable SafeGround P0 demo that proves the loop:
 
 ```text
+sviluppo -> test -> risultato
 Frame capture -> External CV classification -> Mission decision -> Dashboard report -> Safety stop
 ```
 
-P0 optimizes for a working prototype, fast iteration, and demo reliability. It does not include training, detector development, mine detection claims, autonomous navigation, SO101 marker handling, or production hardening.
+This document update is docs-only. It clarifies the P0 development plan and contracts; it does not create app code, SDK adapters, dashboard files, fixtures, or runtime configuration in this step.
+
+P0 optimizes for a working prototype, fast iteration, and demo reliability. Prefer the shortest observable loop over production-ready architecture: each implementation pass should produce a visible result that can be rehearsed, debugged, and repeated. P0 does not include training, detector development, mine detection claims, autonomous navigation, SO101 marker handling, or production hardening.
+
+## Document Boundary
+
+- This file is the P0 software development plan.
+- Physical setup, venue preparation, props, lighting, camera mounting, and onsite hardware readiness stay in `docs/physical_setup_activities.md`.
+- SafeGround P0 can depend on physical readiness checks, but this plan should not duplicate or move that checklist.
+- Future code work should start only after the plan, contracts, and demo fallback path are agreed.
+
+## Macro Areas
+
+P0 is organized around these software/demo areas:
+
+1. Foundation.
+2. Cyberwave integration.
+3. CV integration contract.
+4. Mission state machine.
+5. Safety governor.
+6. Event store and audit trail.
+7. Dashboard P0.
+8. Demo repeatability.
 
 ## Non-Negotiable Scope
 
@@ -22,15 +45,17 @@ P0 optimizes for a working prototype, fast iteration, and demo reliability. It d
 
 ## P0 Workstreams
 
+The workstreams below describe the future implementation path. For this docs-only step, the expected output is a clearer plan, not code changes.
+
 ### 1. Foundation
 
 Deliverables:
 
-- Create the `safeground/` app skeleton only if/when code work starts.
-- Configure `.venv`, package dependencies, and env vars for Cyberwave credentials.
+- Define the planned `safeground/` app boundary and minimal file layout for when code work starts.
+- Record the expected `.venv`, package dependency, and Cyberwave credential setup without creating it in this step.
 - Define runtime mode flags: `mock`, `simulation`, `live`.
-- Default to `mock` or `dry_run=true` for local development and rehearsal.
-- Add a simple config object that records robot IDs, sensor IDs, thresholds, capture paths, and safety limits.
+- Default future implementation to `mock` or `dry_run=true` for local development and rehearsal.
+- Plan a simple config object that records robot IDs, sensor IDs, thresholds, capture paths, and safety limits.
 
 Dependencies:
 
@@ -53,10 +78,10 @@ P0 coverage:
 
 Deliverables:
 
-- Build a small Cyberwave client wrapper for twin discovery, mode selection, and health checks.
+- Plan a small Cyberwave client wrapper for twin discovery, mode selection, and health checks.
 - Produce a runtime capability map for Go2, UGV, SO101, and Standard Camera when available.
-- Implement one real frame capture path from at least one camera or robot twin.
-- Implement mock adapters with the same interface as real adapters.
+- Implement, in the future code phase, one real frame capture path from at least one camera or robot twin.
+- Implement mock adapters with the same interface as real adapters so P0 can run without hardware.
 - Keep real robot commands behind a deterministic adapter and dry-run switch.
 
 Minimum adapter interface:
@@ -94,9 +119,11 @@ P0 coverage:
 - P0.8 Safety
 - P0.9 Mock mode
 
-### 3. External CV Contract
+### 3. CV Integration Contract
 
-The CV implementation is external to this plan. SafeGround P0 consumes its output through a strict schema and does not implement training, detector tuning, or model selection.
+Computer vision is owned by another teammate and remains an external dependency. SafeGround P0 consumes CV output through a strict schema and does not implement training, detector tuning, detector code, model prompts, model selection, weights, or accuracy work.
+
+SafeGround owns only the integration boundary: schema validation, deterministic fixtures, a contract-compatible fake classifier for fallback demos, error handling, and event logging.
 
 Required CV response:
 
@@ -138,7 +165,7 @@ SafeGround-owned expectations:
 - Validate every CV response with Pydantic before state-machine use.
 - Convert invalid output to `UNCERTAIN` plus `HUMAN_REVIEW`.
 - Provide fixture JSON files for `MINE`, `NOT_MINE`, `UNCERTAIN`, invalid JSON, low confidence, and missing bbox.
-- Provide a fake classifier that reads fixtures deterministically for offline demo.
+- Provide a fake classifier that reads fixtures deterministically for offline demo; it is a contract stub, not the real CV implementation.
 - Record raw response, normalized response, frame ID, and validation errors in the event store.
 
 External CV dependency expectations:
@@ -251,7 +278,7 @@ P0 coverage:
 - P0.8 Safety
 - P0.9 Mock mode
 
-### 6. Event Store And Audit Trail
+### 6. Event Store and Audit Trail
 
 Deliverables:
 
@@ -348,6 +375,7 @@ P0 coverage:
 
 ## Recommended Build Order
 
+0. Complete this docs-only alignment step: boundaries, contracts, fallback path, and workstream order.
 1. Foundation and config.
 2. Mock adapters and fixture classifier.
 3. Pydantic models for frame, classification, mission, and event.
@@ -359,7 +387,7 @@ P0 coverage:
 9. External CV integration behind the same contract.
 10. Rehearsal scripts and fallback assets.
 
-This order keeps the demo functional even before hardware and external CV are ready.
+This order keeps the demo functional even before hardware and external CV are ready. Every step should preserve a runnable loop: make one small change, run the mock or live-camera path, observe the dashboard/event output, then iterate.
 
 ## P0 Coverage Matrix
 
@@ -367,22 +395,23 @@ This order keeps the demo functional even before hardware and external CV are re
 | --- | --- | --- | --- |
 | P0.1 | Cyberwave connection | Cyberwave Integration | At least one robot and one camera online, or clear mock mode status |
 | P0.2 | Frame capture | Cyberwave Integration | Backend stores a captured frame from SDK/local camera or fixture |
-| P0.3 | Classification | External CV Contract, State Machine | Fixture or external CV returns `MINE`, `NOT_MINE`, or `UNCERTAIN` |
-| P0.4 | Validated JSON output | External CV Contract | Pydantic accepts valid fixture and rejects invalid fixture safely |
+| P0.3 | Classification | CV Integration Contract, State Machine | Fixture or external CV returns `MINE`, `NOT_MINE`, or `UNCERTAIN` |
+| P0.4 | Validated JSON output | CV Integration Contract | Pydantic accepts valid fixture and rejects invalid fixture safely |
 | P0.5 | State machine | Mission State Machine | Mission traverses `IDLE -> OBSERVE -> CLASSIFY -> REPORT` |
 | P0.6 | Dashboard | Dashboard P0 | UI shows robots, frame, state, classification, and controls |
-| P0.7 | Event log | Event Store And Audit Trail | Timeline records every action and error |
+| P0.7 | Event log | Event Store and Audit Trail | Timeline records every action and error |
 | P0.8 | Safety | Safety Governor | Stop and timeout work; unsafe action is rejected |
 | P0.9 | Mock mode | Foundation, Mock Adapters, Demo Repeatability | Full flow runs without hardware or external CV |
 | P0.10 | Demo script | Demo Repeatability | Operator can repeat a complete mission path |
 
-## Key Dependencies And Gaps
+## Key Dependencies and Gaps
 
 - Real Cyberwave twin slugs, action names, and sensor IDs must be validated onsite.
 - Exact Go2/UGV sensor availability is not guaranteed until physical inspection.
 - External CV runtime shape is assumed to be callable as a local function or HTTP endpoint; SafeGround only requires the JSON contract.
 - Confidence values are operational hints, not calibrated probabilities.
 - Live robot movement is not required for P0 and must remain disabled until safety rehearsal passes.
+- Physical rehearsal tasks are tracked in `docs/physical_setup_activities.md`, not in this plan.
 
 ## Done For P0
 

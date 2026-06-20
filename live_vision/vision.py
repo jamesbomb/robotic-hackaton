@@ -114,22 +114,34 @@ ACTION_OF = {"SAFE": "LASCIA", "DANGER": "RIMUOVI", "AVOID": "EVITA+TRACCIA"}
 GRID_COLS, GRID_ROWS = 9, 6
 RISK_RANK = {"SAFE": 1, "AVOID": 2, "DANGER": 3}    # tieni il piu' pericoloso per cella
 RISK_COL = {"SAFE": (90, 210, 90), "DANGER": (60, 60, 230), "AVOID": (200, 170, 110)}
-MAP = {}                                            # (col,row) -> risk (memoria del cane)
+AREA_NEAR = 0.045     # frazione-frame ~ "vicino" (proxy distanza finche' non c'e' LiDAR)
+RANGE_MAX_M = 4.0     # se la detection porta range_m reale (LiDAR), 0..MAX -> righe
+MAP = {}              # (col,row) -> risk -- piantina top-down: x=direzione, y=distanza
+
+def _cell(d, w, h):
+    """detection -> cella (col=direzione/bearing, row=distanza; vicino in basso)."""
+    cx = d["center"][0]
+    col = min(GRID_COLS-1, max(0, int(cx / w * GRID_COLS)))               # x = bearing sinistra..destra
+    rng = d.get("range_m")
+    if rng is not None:                                                  # distanza reale (LiDAR)
+        nearness = 1.0 - min(1.0, max(0.0, rng / RANGE_MAX_M))
+    else:                                                                # proxy: bbox piu' grande = piu' vicino
+        x, y, bw, bh = d["_px"]; nearness = min(1.0, (bw * bh) / float(w * h) / AREA_NEAR)
+    row = min(GRID_ROWS-1, max(0, int(round(nearness * (GRID_ROWS-1)))))  # vicino -> riga in basso
+    return col, row
 
 def update_map(dets, w, h):
     for d in dets:
-        cx, cy = d["center"]
-        c = min(GRID_COLS-1, max(0, int(cx / w * GRID_COLS)))
-        r = min(GRID_ROWS-1, max(0, int(cy / h * GRID_ROWS)))
-        cur = MAP.get((c, r))
+        cell = _cell(d, w, h)
+        cur = MAP.get(cell)
         if cur is None or RISK_RANK[d["risk"]] > RISK_RANK[cur]:
-            MAP[(c, r)] = d["risk"]
+            MAP[cell] = d["risk"]
 
 def draw_minimap(frame):
     h, w = frame.shape[:2]
-    mw, mh = 198, 126; x0, y0 = 12, h - mh - 46
-    shade(frame, x0 - 6, y0 - 24, x0 + mw + 8, y0 + mh + 8, alpha=0.6)
-    text(frame, "MAPPA RISCHIO", (x0, y0 - 7), 0.45, INK, 1)
+    mw, mh = 198, 120; x0, y0 = 12, h - mh - 66
+    shade(frame, x0 - 6, y0 - 22, x0 + mw + 8, y0 + mh + 28, alpha=0.6)
+    text(frame, "MAPPA  x=direzione  y=distanza", (x0, y0 - 7), 0.4, INK, 1)
     cwc, chc = mw // GRID_COLS, mh // GRID_ROWS
     for c in range(GRID_COLS):
         for r in range(GRID_ROWS):
@@ -137,6 +149,11 @@ def draw_minimap(frame):
             risk = MAP.get((c, r))
             if risk: cv2.rectangle(frame, (x, y), (x+cwc-1, y+chc-1), RISK_COL[risk], -1)
             cv2.rectangle(frame, (x, y), (x+cwc-1, y+chc-1), (60, 64, 72), 1)
+    text(frame, "lontano", (x0 + 3, y0 + 11), 0.34, (150, 155, 165), 1)
+    text(frame, "vicino",  (x0 + 3, y0 + mh - 4), 0.34, (150, 155, 165), 1)
+    dx, dy = x0 + mw // 2, y0 + mh + 12                      # il cane = osservatore, in basso al centro
+    cv2.drawMarker(frame, (dx, dy), (235, 235, 235), cv2.MARKER_TRIANGLE_UP, 13, 2)
+    text(frame, "CANE", (dx - 14, dy + 12), 0.34, (190, 195, 205), 1)
 
 def draw(frame, dets):
     h, w = frame.shape[:2]; counts = {"SAFE": 0, "DANGER": 0, "AVOID": 0}

@@ -1,0 +1,13 @@
+---
+description: Chain of Verification — self-audit reasoning pattern triggered by user prompt
+alwaysApply: false
+---
+
+# Chain of Verification
+
+When the user asks you to apply "chain of verification" (or CoV), follow this protocol:
+
+1. **Answer** the original question directly and completely.
+2. **Generate verification questions** — produce 3-5 targeted questions that, if answered incorrectly in step 1, would reveal flaws, missing edge cases, or wrong assumptions.
+3. **Answer each verification question independently** — treat each as a standalone query, without anchoring to your original answer.
+4. **Revise** your original answer by reconciling any discrepancies found in step 3. Clearly state what changed and why.

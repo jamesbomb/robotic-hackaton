@@ -1,0 +1,53 @@
+---
+description: Consult and keep in sync all project docs in docs/ before coding Cyberwave, robots, CV, or MVP features
+alwaysApply: true
+---
+
+# Docs First
+
+Before writing or changing code in this repository, **read the relevant markdown files in `docs/`**. They are the source of truth for scope, priorities, robot roles, sensors, safety, and SDK usage.
+
+Do not rely on memory or generic Cyberwave docs alone when this project already documents a decision.
+
+## Documentation index
+
+| File | Use when |
+| --- | --- |
+| `docs/hackathon-mvp-requirements.md` | MVP scope, P0/P1/P2 priorities, architecture, web UI, demo script, safety |
+| `docs/robot-sensors-research.md` | Sensor capabilities, robot roles, hardware verification checklist |
+| `docs/safeground_mvp_requirements.md` | SafeGround product scope, orchestration, adapters, SDK primitives (section 16), open questions |
+
+## Workflow
+
+1. Identify which doc(s) apply to the task.
+2. Read the relevant sections (use search within `docs/` if needed).
+3. Align the implementation with documented priorities and safety constraints.
+4. If the change alters scope, robot behavior, or assumptions, **update the doc(s)** in the same session.
+5. For SDK details not covered in `docs/`, cross-check [Cyberwave docs](https://docs.cyberwave.com/overview) and note any gap in project docs if it blocks the hackathon.
+
+## Cyberwave SDK — SO-101 arm (reference)
+
+Use this pattern for twin creation, studio transform, and joint control. Prefer `cw.affect("simulation")` or `cw.affect("live")` before sending commands to hardware.
+
+```python
+from cyberwave import Cyberwave
+
+cw = Cyberwave()
+
+# One-liner to create the twin for SO-101
+so_101 = cw.twin("the-robot-studio/so101")
+
+# Edit transform in the studio
+so_101.edit_position(x=1, y=0, z=0.5)
+so_101.edit_rotation(yaw=90)  # degrees
+
+# Joint control
+so_101.joints.arm_joint = 45  # degrees
+```
+
+Also documented in `docs/safeground_mvp_requirements.md` (section 16): `arm.joints.set("joint_name", value)`, `joints.list()`, `get_all()`. Validate exact joint names and twin slugs against the hackathon environment before live runs.
+
+## Safety
+
+- Work only with mock objects in controlled demo areas (see `docs/hackathon-mvp-requirements.md`).
+- Use bounded, supervised robot motion; never touch targets classified as mine or dubbio with SO-101 unless explicitly marked safe in docs and demo setup.

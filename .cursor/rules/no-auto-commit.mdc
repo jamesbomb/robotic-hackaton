@@ -1,0 +1,22 @@
+---
+description: Never commit or push without explicit user approval
+alwaysApply: true
+---
+
+# No Automatic Commits
+
+You MUST NEVER run `git commit`, `git push`, or any destructive git command without explicit user approval.
+
+When changes are ready to be committed:
+
+1. Show a summary of staged/unstaged changes
+2. Propose a commit message
+3. Ask the user to run the command themselves:
+
+```bash
+git add <files> && git commit -m "proposed message"
+```
+
+4. Wait for the user to confirm or modify before proceeding
+
+This applies to ALL repositories in the workspace.

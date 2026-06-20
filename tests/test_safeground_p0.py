@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 
 from safeground.adapters import MockRobotAdapter
+from safeground.agents import CommandInterpreterAgent
+from safeground.cli import run_command
 from safeground.cv import MockCVClient
 from safeground.event_store import JsonlEventStore
 from safeground.mission import MissionRunner
@@ -15,6 +17,7 @@ from safeground.models import (
     MissionState,
     RecommendedAction,
     SafeGroundConfig,
+    UserIntentType,
 )
 from safeground.safety import SafetyGovernor
 
@@ -96,6 +99,44 @@ class SafeGroundP0Tests(unittest.TestCase):
                 self.assertEqual(event_store.events[-1].event_type, EventType.SAFETY_CHECK_FAILED)
 
         asyncio.run(_run())
+
+    def test_chat_command_runs_mock_mission(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                config = self.config(tmpdir)
+                report, events = await run_command(
+                    config,
+                    "ispeziona settore B2 con scenario dubbio",
+                    "MINE",
+                )
+                return report, events.events
+
+        report, events = asyncio.run(_run())
+
+        self.assertEqual(report.state, MissionState.REPORT)
+        self.assertIsNotNone(report.classification)
+        self.assertEqual(report.classification.label, ClassificationLabel.UNCERTAIN)
+        event_types = [event.event_type for event in events]
+        self.assertIn(EventType.AGENT_INTENT_PARSED, event_types)
+        self.assertIn(EventType.AGENT_DECISION_MADE, event_types)
+
+    def test_stop_command_bypasses_mission_run(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                config = self.config(tmpdir)
+                report, events = await run_command(config, "ferma tutto subito", "MINE")
+                return report, events.events
+
+        report, events = asyncio.run(_run())
+
+        self.assertEqual(report.state, MissionState.MANUAL_STOP)
+        self.assertIsNone(report.classification)
+        self.assertIn(EventType.MISSION_STOPPED, [event.event_type for event in events])
+
+    def test_unknown_command_requires_human_review(self) -> None:
+        intent = CommandInterpreterAgent().parse("raccontami una barzelletta")
+
+        self.assertEqual(intent.intent, UserIntentType.UNKNOWN)
 
 
 if __name__ == "__main__":

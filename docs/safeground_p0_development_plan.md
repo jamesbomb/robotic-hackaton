@@ -33,6 +33,29 @@ P0 is organized around these software/demo areas:
 7. Dashboard P0.
 8. Demo repeatability.
 
+## Chat And Voice Control Layer
+
+Chat and voice commands sit above the mission state machine. They are input
+channels for operator intent, not robot-control channels.
+
+```text
+Chat text / Whisper transcript
+  -> CommandInterpreterAgent
+  -> OrchestratorAgent
+  -> SafetyGovernor
+  -> Mission state machine
+  -> Robot adapters
+```
+
+Rules:
+
+- Text chat is the primary command path for the prototype.
+- Voice is secondary: Whisper transcribes audio to text, then the same chat path handles it.
+- Stop phrases such as `stop`, `ferma tutto`, and `halt` bypass LLM planning and go directly to the deterministic stop path.
+- LLM/subagent output must stay structured and high-level: intent, robot selection, reason, constraints.
+- Robot adapters receive only allow-listed deterministic actions after schema validation and safety checks.
+- If the command is ambiguous or outside scope, the system returns `ASK_HUMAN`/human review and does not move hardware.
+
 ## Non-Negotiable Scope
 
 - Operate only with inert mock objects in a controlled demo area.

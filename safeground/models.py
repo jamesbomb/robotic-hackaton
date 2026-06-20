@@ -40,8 +40,25 @@ class RecommendedAction(StrEnum):
     HUMAN_REVIEW = "HUMAN_REVIEW"
 
 
+class UserIntentType(StrEnum):
+    START_MISSION = "START_MISSION"
+    STOP_ALL = "STOP_ALL"
+    STATUS = "STATUS"
+    UNKNOWN = "UNKNOWN"
+
+
+class AgentDecisionType(StrEnum):
+    RUN_MISSION = "RUN_MISSION"
+    STOP_ALL = "STOP_ALL"
+    REPORT_STATUS = "REPORT_STATUS"
+    ASK_HUMAN = "ASK_HUMAN"
+
+
 class EventType(StrEnum):
     MISSION_STARTED = "MISSION_STARTED"
+    USER_COMMAND_RECEIVED = "USER_COMMAND_RECEIVED"
+    AGENT_INTENT_PARSED = "AGENT_INTENT_PARSED"
+    AGENT_DECISION_MADE = "AGENT_DECISION_MADE"
     ROBOT_STATUS_UPDATED = "ROBOT_STATUS_UPDATED"
     FRAME_CAPTURED = "FRAME_CAPTURED"
     CV_RESULT_RECEIVED = "CV_RESULT_RECEIVED"
@@ -114,6 +131,27 @@ class SafetyDecision(BaseModel):
     dry_run: bool
     reason: str
     timeout_s: float
+
+
+class UserIntent(BaseModel):
+    intent: UserIntentType
+    original_text: str
+    target_sector: str | None = None
+    requested_robot: str = "auto"
+    scenario_hint: str | None = None
+    requires_confirmation: bool = False
+    reason: str
+
+
+class AgentDecision(BaseModel):
+    decision: AgentDecisionType
+    action: str
+    target_sector: str | None = None
+    assigned_robot: str = "auto"
+    scenario_hint: str | None = None
+    requires_confirmation: bool = False
+    reason: str
+    constraints: dict[str, Any] = Field(default_factory=dict)
 
 
 class Mission(BaseModel):

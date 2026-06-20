@@ -27,6 +27,25 @@ Useful single-scenario runs:
 .venv/bin/python -m safeground.cli --scenario INVALID
 ```
 
+## Chat And Voice Commands
+
+Chat commands are interpreted into safe structured intents before they reach the
+mission runner. Stop commands bypass planning and call the deterministic stop path.
+
+```bash
+.venv/bin/python -m safeground.cli --command "ispeziona settore B2 con scenario dubbio" --print-events
+.venv/bin/python -m safeground.cli --command "ferma tutto"
+```
+
+Voice input is secondary and reuses the same command path after Whisper
+transcription. It requires the optional `openai-whisper` package in the project
+venv:
+
+```bash
+.venv/bin/pip install openai-whisper
+.venv/bin/python -m safeground.cli --voice-wav input.wav --whisper-model tiny
+```
+
 The default event log is append-only JSONL at `safeground_runs/events.jsonl`.
 Captured mock frames are copied to `safeground_runs/frames/`.
 

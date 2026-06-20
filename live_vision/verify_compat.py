@@ -123,16 +123,22 @@ def stage_env(env_uuid: str | None, twin_uuid: str | None) -> None:
         from cyberwave import Cyberwave
         from cw_vision import _api_key, classify as vlm
         cw = Cyberwave(api_key=_api_key())
-        cw.affect("simulation")
-        go2 = cw.twin("unitree/go2")
-        frame = go2.capture_frame("numpy")
-        check("frame ricevuto dal Go2", frame is not None,
-              f"shape {getattr(frame, 'shape', '?')}")
+        try:
+            cw.affect("simulation")
+        except Exception:
+            pass
+        dog = cw.twin(twin_id=twin_uuid, environment_id=env_uuid)   # 403 se la key non ha accesso
+        b = dog.get_latest_frame() if hasattr(dog, "get_latest_frame") else None
+        if not b:
+            check("frame dal Go2", False, "stream spento / nessun frame (attiva SIMULATE o LIVE nel viewer)")
+            return
+        frame = cv2.imdecode(np.frombuffer(b, np.uint8), cv2.IMREAD_COLOR)   # bytes JPEG -> BGR
+        check("frame decodificato (BGR)", frame is not None,
+              f"{len(b)} byte -> {getattr(frame, 'shape', 'None')}")
         if frame is not None:
-            dets = vlm(frame if frame.ndim == 3 else frame)
-            check("frame del Go2 classificabile dal nostro VLM", True, f"{len(dets)} detection")
+            check("frame del Go2 classificabile dal nostro VLM", True, f"{len(vlm(frame))} detection")
     except Exception as exc:
-        check("connessione env/twin", False, str(exc))
+        check("accesso/connessione env/twin", False, repr(exc)[:160])
 
 
 def main() -> None:

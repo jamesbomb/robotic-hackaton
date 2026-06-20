@@ -1,4 +1,6 @@
 import type {
+  BaseMovementCommandRequest,
+  BaseMovementResult,
   EventRecord,
   ManualArmCommandRequest,
   ManualArmResult,
@@ -50,6 +52,13 @@ export function sendCommand(text: string, scenario: string) {
 
 export function sendManualArmCommand(robotId: string, command: ManualArmCommandRequest) {
   return request<ManualArmResult>(`/api/robots/${robotId}/manual-arm`, {
+    method: "POST",
+    body: JSON.stringify(command),
+  });
+}
+
+export function sendBaseMovementCommand(robotId: string, command: BaseMovementCommandRequest) {
+  return request<BaseMovementResult>(`/api/robots/${robotId}/move`, {
     method: "POST",
     body: JSON.stringify(command),
   });

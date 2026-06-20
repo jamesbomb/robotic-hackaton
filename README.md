@@ -15,12 +15,15 @@ client.
 Use the existing project virtualenv:
 
 ```bash
-.venv/bin/python -m safeground.cli --scenario ALL --print-events
+.venv/bin/python -m safeground.cli --scenario FIELD --print-events
 ```
 
-Useful single-scenario runs:
+The main test scenario is one shared field containing orange cans (`MINE`),
+black cans (`UNCERTAIN`), and green cans (`NOT_MINE`) scattered together.
+Useful diagnostic fixture runs:
 
 ```bash
+.venv/bin/python -m safeground.cli --scenario FIELD
 .venv/bin/python -m safeground.cli --scenario MINE
 .venv/bin/python -m safeground.cli --scenario NOT_MINE
 .venv/bin/python -m safeground.cli --scenario UNCERTAIN
@@ -33,7 +36,7 @@ Chat commands are interpreted into safe structured intents before they reach the
 mission runner. Stop commands bypass planning and call the deterministic stop path.
 
 ```bash
-.venv/bin/python -m safeground.cli --command "ispeziona settore B2 con scenario dubbio" --print-events
+.venv/bin/python -m safeground.cli --command "ispeziona il campo con lattine arancioni nere e verdi" --print-events
 .venv/bin/python -m safeground.cli --command "ferma tutto"
 ```
 
@@ -53,6 +56,14 @@ The ops console exposes bounded human takeover controls for the SO-101 mock arm:
 `place_safe_marker` preset for `NOT_MINE` targets only. The matching API endpoint
 is `POST /api/robots/so101/manual-arm`; every command requires
 `operator_confirmed=true` and is written to the JSONL audit log.
+
+## P0 Base Movements
+
+Mobile robots expose bounded base movement in mock/simulation P0:
+`move_forward`, `move_backward`, `rotate_left`, and `rotate_right`. Use
+`POST /api/robots/go2/move` or the dashboard panel. Each command requires
+`operator_confirmed=true`, is wrapped by stop-before/stop-after sequencing, and
+is capped at 0.5 m or 15 degrees.
 
 The default event log is append-only JSONL at `safeground_runs/events.jsonl`.
 Captured mock frames are copied to `safeground_runs/frames/`.

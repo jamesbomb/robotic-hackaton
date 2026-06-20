@@ -18,6 +18,7 @@ from safeground.models import (
 
 
 SCENARIO_TO_FIXTURE = {
+    "FIELD": "field.json",
     "MINE": "mine.json",
     "NOT_MINE": "not_mine.json",
     "UNCERTAIN": "uncertain.json",

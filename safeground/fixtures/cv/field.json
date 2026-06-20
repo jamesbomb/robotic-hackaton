@@ -1,0 +1,12 @@
+{
+  "label": "UNCERTAIN",
+  "confidence": 0.66,
+  "bbox": [210, 160, 300, 240],
+  "evidence": [
+    "single test field contains orange, black, and green cans together",
+    "orange can is the mock MINE target and must not be touched",
+    "black can is the UNCERTAIN target and requires a second view",
+    "green can is the NOT_MINE target and can be digitally marked only"
+  ],
+  "recommended_action": "SECOND_VIEW"
+}

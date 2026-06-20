@@ -15,7 +15,7 @@ from safeground.safety import SafetyGovernor
 from safeground.voice.whisper import transcribe_audio_file
 
 
-DEMO_SCENARIOS = ["NOT_MINE", "MINE", "UNCERTAIN"]
+DEMO_SCENARIOS = ["FIELD"]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,7 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--scenario",
         choices=[*sorted(SCENARIO_TO_FIXTURE), "ALL"],
-        default="MINE",
+        default="FIELD",
         help="Fixture-backed CV scenario to replay.",
     )
     parser.add_argument(
@@ -158,7 +158,7 @@ async def run_command(
     if decision.decision == AgentDecisionType.RUN_MISSION:
         scenario = decision.scenario_hint or fallback_scenario
         if scenario == "ALL":
-            scenario = "MINE"
+            scenario = "FIELD"
         report = await runner.run(scenario, target_sector=decision.target_sector)
         return report, event_store
 

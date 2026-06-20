@@ -77,6 +77,14 @@ class CommandInterpreterAgent:
         return match.group(1).split()[-1].upper()
 
     def _extract_scenario(self, text: str) -> str | None:
+        if (
+            "field" in text
+            or "campo" in text
+            or "lattine" in text
+            or "lattina" in text
+            or "test completo" in text
+        ):
+            return "FIELD"
         if "not_mine" in text or "non mine" in text or "innocuo" in text:
             return "NOT_MINE"
         if "uncertain" in text or "dubbio" in text or "incerto" in text:

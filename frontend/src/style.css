@@ -332,26 +332,39 @@ small {
   gap: 0.65rem;
 }
 
-.manual-arm-panel {
+.manual-arm-panel,
+.base-movement-panel {
   display: grid;
   gap: 0.7rem;
 }
 
-.manual-arm-panel p {
+.manual-arm-panel p,
+.base-movement-panel p {
   margin: 0;
   color: #9db4ac;
 }
 
 .manual-arm-panel label,
-.manual-arm-nudge {
+.manual-arm-nudge,
+.base-movement-panel label {
   display: grid;
   gap: 0.4rem;
 }
 
-.manual-arm-grid {
+.manual-arm-grid,
+.movement-grid,
+.movement-values {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
   gap: 0.5rem;
+}
+
+.manual-arm-grid {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.movement-grid,
+.movement-values {
+  grid-template-columns: repeat(2, 1fr);
 }
 
 .manual-arm-nudge {

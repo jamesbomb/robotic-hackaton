@@ -25,9 +25,7 @@ const emit = defineEmits<{
       <span v-if="dryRun" class="dry-run">DRY RUN</span>
     </div>
     <div class="header-actions">
-      <button :disabled="busy" @click="emit('start', 'MINE')">Start Mine</button>
-      <button :disabled="busy" @click="emit('start', 'NOT_MINE')">Start Clear</button>
-      <button :disabled="busy" @click="emit('start', 'UNCERTAIN')">Second Look Demo</button>
+      <button :disabled="busy" @click="emit('start', 'FIELD')">Start Field Scan</button>
       <button class="danger" :disabled="busy" @click="emit('stop')">Stop All</button>
     </div>
   </header>

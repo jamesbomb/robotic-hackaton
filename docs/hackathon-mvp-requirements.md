@@ -146,6 +146,7 @@ Le soglie sono parametri demo, da tarare su oggetti mock e lighting reale.
 - Gestire i tre stati `mine`, `non_mine`, `dubbio`.
 - Mostrare event log con timestamp, fonte frame, decisione e rationale.
 - Consentire override umano: conferma, rigetta, stop missione.
+- Integrare movimenti base bounded per robot mobili: avanti, indietro, rotazione sinistra/destra.
 - Supportare modalita' dry-run senza inviare comandi fisici ai robot.
 - Eseguire stop immediato prima e dopo ogni azione robotica.
 
@@ -184,7 +185,7 @@ Vista consigliata:
 - Pannello robot: UGV, Go2, SO-101, camera fissa, stato online/offline e modalita' `live/sim/dry-run`.
 - Event log append-only.
 - Pannello decisione: classe corrente, confidence, rationale, prossima azione.
-- Controlli: `Start Scan`, `Request Second Look`, `Confirm Mine`, `Mark Non Mine`, `Stop All`, `Dry Run`.
+- Controlli: `Start Scan`, `Request Second Look`, `Confirm Mine`, `Mark Non Mine`, `Move Forward/Backward`, `Rotate Left/Right`, `Stop All`, `Dry Run`.
 
 ## Agent Prompting
 
@@ -193,6 +194,10 @@ L'agente LLM non deve decidere liberamente comandi raw. Deve scegliere da un voc
 Azioni consentite P0/P1:
 
 - `scan_area`
+- `move_forward`
+- `move_backward`
+- `rotate_left`
+- `rotate_right`
 - `request_second_look`
 - `hold_position`
 - `mark_suspected_mine`

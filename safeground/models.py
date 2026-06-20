@@ -42,6 +42,13 @@ class ManualArmAction(StrEnum):
     PLACE_SAFE_MARKER = "place_safe_marker"
 
 
+class BaseMovementAction(StrEnum):
+    MOVE_FORWARD = "move_forward"
+    MOVE_BACKWARD = "move_backward"
+    ROTATE_LEFT = "rotate_left"
+    ROTATE_RIGHT = "rotate_right"
+
+
 class RecommendedAction(StrEnum):
     REPORT = "REPORT"
     SECOND_VIEW = "SECOND_VIEW"
@@ -83,6 +90,8 @@ class EventType(StrEnum):
     MISSION_STOPPED = "MISSION_STOPPED"
     MANUAL_ARM_COMMAND_REQUESTED = "MANUAL_ARM_COMMAND_REQUESTED"
     MANUAL_ARM_COMMAND_APPLIED = "MANUAL_ARM_COMMAND_APPLIED"
+    BASE_MOVEMENT_COMMAND_REQUESTED = "BASE_MOVEMENT_COMMAND_REQUESTED"
+    BASE_MOVEMENT_COMMAND_APPLIED = "BASE_MOVEMENT_COMMAND_APPLIED"
     ROUTE_RECORDED = "ROUTE_RECORDED"
     ROUTE_INVALIDATED = "ROUTE_INVALIDATED"
     ROUTE_REUSED_FOR_VERIFICATION = "ROUTE_REUSED_FOR_VERIFICATION"
@@ -105,6 +114,10 @@ class SafeGroundConfig(BaseModel):
             "capture_frame",
             "stop",
             "hold_position",
+            "move_forward",
+            "move_backward",
+            "rotate_left",
+            "rotate_right",
             "manual_arm_home",
             "manual_arm_hold_position",
             "manual_arm_nudge_joint",
@@ -112,6 +125,8 @@ class SafeGroundConfig(BaseModel):
         }
     )
     action_timeout_s: float = Field(default=2.0, gt=0.0)
+    max_base_move_distance_m: float = Field(default=0.5, gt=0.0)
+    max_base_rotate_degrees: float = Field(default=15.0, gt=0.0)
     manual_arm_step_limit_degrees: float = Field(default=5.0, gt=0.0)
     so101_allowed_joints: set[str] = Field(
         default_factory=lambda: {
@@ -154,7 +169,7 @@ class RobotCapabilityMap(BaseModel):
 
 class CommandRequest(BaseModel):
     text: str | None = None
-    scenario: str = "MINE"
+    scenario: str = "FIELD"
     target_sector: str | None = None
 
 
@@ -183,6 +198,40 @@ class ManualArmResult(BaseModel):
     dry_run: bool
     joint_name: str | None = None
     joint_positions_degrees: dict[str, float] = Field(default_factory=dict)
+    executed_sequence: list[str] = Field(default_factory=list)
+    reason: str
+
+
+class BaseMovementCommand(BaseModel):
+    action: BaseMovementAction
+    operator_id: str = "operator"
+    operator_confirmed: bool = False
+    distance_m: float = 0.25
+    angle_degrees: float = 10.0
+    reason: str = "P0 bounded base movement."
+
+    @field_validator("distance_m")
+    @classmethod
+    def validate_distance(cls, value: float) -> float:
+        if value <= 0 or value > 0.5:
+            raise ValueError("base movement distance must be > 0 and <= 0.5 m")
+        return value
+
+    @field_validator("angle_degrees")
+    @classmethod
+    def validate_angle(cls, value: float) -> float:
+        if value <= 0 or value > 15.0:
+            raise ValueError("base rotation angle must be > 0 and <= 15 degrees")
+        return value
+
+
+class BaseMovementResult(BaseModel):
+    command_id: str = Field(default_factory=lambda: f"base-move-{uuid4().hex[:8]}")
+    robot_id: str
+    action: BaseMovementAction
+    applied: bool
+    dry_run: bool
+    pose: RobotPose
     executed_sequence: list[str] = Field(default_factory=list)
     reason: str
 

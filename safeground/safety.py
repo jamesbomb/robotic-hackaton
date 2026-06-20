@@ -6,6 +6,8 @@ from typing import TypeVar
 
 from safeground.event_store import JsonlEventStore
 from safeground.models import (
+    BaseMovementAction,
+    BaseMovementCommand,
     ClassificationLabel,
     EventType,
     ManualArmAction,
@@ -101,6 +103,51 @@ class SafetyGovernor:
         )
         return decision
 
+    def check_base_movement_command(
+        self,
+        mission: Mission,
+        robot_id: str,
+        command: BaseMovementCommand,
+    ) -> SafetyDecision:
+        reasons: list[str] = []
+
+        if command.action.value not in self.config.allowed_actions:
+            reasons.append("blocked by safety allow-list")
+        if robot_id.lower() in {"so101", "so-101", "fixed-camera"}:
+            reasons.append("base movement is restricted to mobile robots")
+        if not command.operator_confirmed:
+            reasons.append("operator confirmation is required")
+        if command.action in {
+            BaseMovementAction.MOVE_FORWARD,
+            BaseMovementAction.MOVE_BACKWARD,
+        } and command.distance_m > self.config.max_base_move_distance_m:
+            reasons.append("base movement distance exceeds configured P0 limit")
+        if command.action in {
+            BaseMovementAction.ROTATE_LEFT,
+            BaseMovementAction.ROTATE_RIGHT,
+        } and command.angle_degrees > self.config.max_base_rotate_degrees:
+            reasons.append("base rotation exceeds configured P0 limit")
+
+        allowed = not reasons
+        decision = SafetyDecision(
+            action=command.action.value,
+            allowed=allowed,
+            dry_run=self.config.dry_run,
+            reason="; ".join(reasons) if reasons else "bounded P0 base movement allowed",
+            timeout_s=self.config.action_timeout_s,
+        )
+        self.event_store.emit(
+            mission.mission_id,
+            EventType.SAFETY_CHECK_PASSED if allowed else EventType.SAFETY_CHECK_FAILED,
+            state=mission.state,
+            robot_id=robot_id,
+            data={
+                **decision.model_dump(mode="json"),
+                "command": command.model_dump(mode="json"),
+            },
+        )
+        return decision
+
     async def run_checked(
         self,
         mission: Mission,
@@ -120,6 +167,18 @@ class SafetyGovernor:
         operation: Callable[[], Awaitable[T]],
     ) -> T:
         decision = self.check_manual_arm_command(mission, robot_id, command)
+        if not decision.allowed:
+            raise PermissionError(decision.reason)
+        return await asyncio.wait_for(operation(), timeout=decision.timeout_s)
+
+    async def run_base_movement_checked(
+        self,
+        mission: Mission,
+        robot_id: str,
+        command: BaseMovementCommand,
+        operation: Callable[[], Awaitable[T]],
+    ) -> T:
+        decision = self.check_base_movement_command(mission, robot_id, command)
         if not decision.allowed:
             raise PermissionError(decision.reason)
         return await asyncio.wait_for(operation(), timeout=decision.timeout_s)

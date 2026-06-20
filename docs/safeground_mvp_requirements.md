@@ -399,6 +399,7 @@ Regole minime:
 - SO101 e' escluso dalla regola di locomozione sopra mina perche' e' un braccio fisso/marker agent, ma resta soggetto al divieto di contatto con `MINE` e `UNCERTAIN`;
 - velocità massima per robot;
 - timeout per ogni movimento;
+- movimenti base P0 limitati a micro-step: massimo 0,5 m o 15 gradi per comando;
 - allowlist di azioni;
 - un solo comando di locomozione attivo per robot;
 - stop automatico prima di capture;
@@ -670,6 +671,7 @@ Queste feature definiscono il prodotto minimo dimostrabile.
 | P0.8 | Safety | Stop manuale e timeout funzionanti |
 | P0.9 | Mock mode | Tutto il flusso funziona senza hardware reale |
 | P0.10 | Demo script | Una missione completa è ripetibile |
+| P0.11 | Movimenti base bounded | Dashboard/API eseguono avanti, indietro e rotazioni brevi con conferma operatore, stop-wrapping e audit log |
 
 ## P1 — Premio principale
 

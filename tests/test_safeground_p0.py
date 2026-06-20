@@ -12,6 +12,8 @@ from safeground.cv import MockCVClient
 from safeground.event_store import JsonlEventStore
 from safeground.mission import MissionRunner
 from safeground.models import (
+    BaseMovementAction,
+    BaseMovementCommand,
     ClassificationLabel,
     EventType,
     ManualArmAction,
@@ -49,6 +51,7 @@ class SafeGroundP0Tests(unittest.TestCase):
 
     def test_valid_fixtures_reach_report(self) -> None:
         for scenario, label in [
+            ("FIELD", ClassificationLabel.UNCERTAIN),
             ("MINE", ClassificationLabel.MINE),
             ("NOT_MINE", ClassificationLabel.NOT_MINE),
             ("UNCERTAIN", ClassificationLabel.UNCERTAIN),
@@ -110,8 +113,8 @@ class SafeGroundP0Tests(unittest.TestCase):
                 config = self.config(tmpdir)
                 report, events = await run_command(
                     config,
-                    "ispeziona settore B2 con scenario dubbio",
-                    "MINE",
+                    "ispeziona il campo con lattine arancioni nere e verdi",
+                    "FIELD",
                 )
                 return report, events.events
 
@@ -146,7 +149,7 @@ class SafeGroundP0Tests(unittest.TestCase):
                     SafetyGovernor(config, event_store),
                     fleet=fleet,
                 )
-                report = await runner.run("UNCERTAIN")
+                report = await runner.run("FIELD")
                 return report, event_store.events
 
         report, events = asyncio.run(_run())
@@ -237,7 +240,7 @@ class SafeGroundP0Tests(unittest.TestCase):
         async def _run():
             with tempfile.TemporaryDirectory() as tmpdir:
                 service = OrchestratorService(self.config(tmpdir))
-                report = await service.start_mission("UNCERTAIN")
+                report = await service.start_mission("FIELD")
                 snapshot = await service.snapshot()
                 return report, snapshot
 
@@ -296,6 +299,52 @@ class SafeGroundP0Tests(unittest.TestCase):
 
         self.assertIn(EventType.SAFETY_CHECK_FAILED, [event.event_type for event in events])
 
+    def test_p0_base_movement_executes_bounded_forward_step(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                service = OrchestratorService(self.config(tmpdir))
+                result = await service.move_robot_base(
+                    "go2",
+                    BaseMovementCommand(
+                        action=BaseMovementAction.MOVE_FORWARD,
+                        operator_confirmed=True,
+                        distance_m=0.25,
+                        reason="P0 smoke movement.",
+                    ),
+                )
+                status = await service.fleet["go2"].status()
+                return result, status, service.events(limit=None)
+
+        result, status, events = asyncio.run(_run())
+
+        self.assertTrue(result.applied)
+        self.assertEqual(result.robot_id, "go2")
+        self.assertAlmostEqual(result.pose.x, 0.45)
+        self.assertEqual(status.task, "manual_base_movement")
+        event_types = [event.event_type for event in events]
+        self.assertIn(EventType.BASE_MOVEMENT_COMMAND_REQUESTED, event_types)
+        self.assertIn(EventType.SAFETY_CHECK_PASSED, event_types)
+        self.assertIn(EventType.BASE_MOVEMENT_COMMAND_APPLIED, event_types)
+
+    def test_p0_base_movement_is_restricted_to_mobile_robots(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                service = OrchestratorService(self.config(tmpdir))
+                with self.assertRaises(PermissionError):
+                    await service.move_robot_base(
+                        "so101",
+                        BaseMovementCommand(
+                            action=BaseMovementAction.MOVE_FORWARD,
+                            operator_confirmed=True,
+                            distance_m=0.25,
+                        ),
+                    )
+                return service.events(limit=None)
+
+        events = asyncio.run(_run())
+
+        self.assertIn(EventType.SAFETY_CHECK_FAILED, [event.event_type for event in events])
+
     def test_fastapi_app_imports_with_registered_routes(self) -> None:
         from safeground.api.server import app
 
@@ -304,6 +353,7 @@ class SafeGroundP0Tests(unittest.TestCase):
         self.assertIn("/api/missions/start", paths)
         self.assertIn("/api/robots", paths)
         self.assertIn("/api/robots/{robot_id}/manual-arm", paths)
+        self.assertIn("/api/robots/{robot_id}/move", paths)
         self.assertIn("/ws/events", paths)
 
 

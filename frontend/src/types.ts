@@ -13,6 +13,7 @@ export type MissionState =
 
 export type ClassificationLabel = "MINE" | "NOT_MINE" | "UNCERTAIN";
 export type ManualArmAction = "home" | "hold_position" | "nudge_joint" | "place_safe_marker";
+export type BaseMovementAction = "move_forward" | "move_backward" | "rotate_left" | "rotate_right";
 
 export interface RobotPose {
   x: number;
@@ -52,6 +53,26 @@ export interface ManualArmResult {
   dry_run: boolean;
   joint_name: string | null;
   joint_positions_degrees: Record<string, number>;
+  executed_sequence: string[];
+  reason: string;
+}
+
+export interface BaseMovementCommandRequest {
+  action: BaseMovementAction;
+  operator_id?: string;
+  operator_confirmed: boolean;
+  distance_m?: number;
+  angle_degrees?: number;
+  reason?: string;
+}
+
+export interface BaseMovementResult {
+  command_id: string;
+  robot_id: string;
+  action: BaseMovementAction;
+  applied: boolean;
+  dry_run: boolean;
+  pose: RobotPose;
   executed_sequence: string[];
   reason: string;
 }

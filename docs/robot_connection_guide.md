@@ -367,7 +367,8 @@ Per il demo:
 
 - P0 deve funzionare anche senza hardware, con mock e fixture.
 - Il primo collegamento live utile e' frame capture da camera o robot.
-- La locomozione live non e' requisito P0.
+- I movimenti base sono requisito P0 come contratto software e simulazione/mock: avanti, indietro, rotazione sinistra/destra.
+- La locomozione live P0 resta limitata a un micro-movimento supervisionato solo dopo frame, stop e health check riusciti.
 - Go2 e UGV devono usare route sicure registrate per le seconde verifiche.
 - SO-101 resta marker agent P2 e non partecipa alla locomozione safe-route.
 - Qualsiasi comando live passa da allow-list, timeout, stop e human override.

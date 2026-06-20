@@ -118,9 +118,13 @@ class RobotAdapter:
     async def capabilities(self) -> dict: ...
     async def capture_frame(self, sensor_id: str | None = None) -> "FrameRef": ...
     async def stop(self) -> None: ...
+    async def execute_base_movement(self, command: "BaseMovementCommand") -> "BaseMovementResult": ...
 ```
 
-Live movement is not required for P0 success. If enabled for a smoke test, use only pre-approved bounded actions such as `stop`, `capture_frame`, and one supervised micro-move.
+Base movement is required for P0 as a bounded software contract in mock/simulation:
+`move_forward`, `move_backward`, `rotate_left`, `rotate_right`. Live movement remains
+limited to one supervised micro-move after `stop`, frame capture, health and controller
+policy checks succeed.
 
 Dependencies:
 

@@ -3,12 +3,15 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import {
   connectEvents,
   getSnapshot,
+  sendBaseMovementCommand,
   sendCommand,
   sendManualArmCommand,
   startMission,
   stopMission,
 } from "./api";
 import type {
+  BaseMovementCommandRequest,
+  BaseMovementResult,
   EventRecord,
   ManualArmCommandRequest,
   ManualArmResult,
@@ -16,6 +19,7 @@ import type {
   MissionSnapshot,
   RobotStatus,
 } from "./types";
+import BaseMovementPanel from "./components/BaseMovementPanel.vue";
 import CameraPanel from "./components/CameraPanel.vue";
 import ClassificationCard from "./components/ClassificationCard.vue";
 import CommandPalette from "./components/CommandPalette.vue";
@@ -31,6 +35,7 @@ const report = ref<MissionReport | null>(null);
 const robots = ref<RobotStatus[]>([]);
 const events = ref<EventRecord[]>([]);
 const manualArmResult = ref<ManualArmResult | null>(null);
+const baseMovementResult = ref<BaseMovementResult | null>(null);
 const busy = ref(false);
 const error = ref<string | null>(null);
 let socket: WebSocket | null = null;
@@ -76,6 +81,19 @@ async function runManualArmTakeover(robotId: string, command: ManualArmCommandRe
   }
 }
 
+async function runBaseMovement(robotId: string, command: BaseMovementCommandRequest) {
+  busy.value = true;
+  error.value = null;
+  try {
+    baseMovementResult.value = await sendBaseMovementCommand(robotId, command);
+    await refresh();
+  } catch (caught) {
+    error.value = caught instanceof Error ? caught.message : "Unknown error";
+  } finally {
+    busy.value = false;
+  }
+}
+
 function onEvent(event: EventRecord) {
   events.value = [...events.value, event].slice(-200);
 }
@@ -107,6 +125,15 @@ onUnmounted(() => {
       <aside class="left-rail">
         <RobotFleetPanel :robots="robots" />
         <SafetyControls :dry-run="dryRun" :runtime-mode="runtimeMode" @stop="() => runAction(stopMission)" />
+        <BaseMovementPanel
+          :robots="robots"
+          :busy="busy"
+          @move="(robotId, command) => runBaseMovement(robotId, command)"
+        />
+        <p v-if="baseMovementResult" class="subtle">
+          Last base move: {{ baseMovementResult.robot_id }} /
+          {{ baseMovementResult.action }}
+        </p>
         <ManualArmPanel
           :robot="so101"
           :busy="busy"

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import math
 import shutil
 from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
 from safeground.models import (
+    BaseMovementAction,
+    BaseMovementCommand,
+    BaseMovementResult,
     FrameRef,
     ManualArmAction,
     ManualArmCommand,
@@ -35,6 +39,8 @@ class RobotAdapter(Protocol):
 
     async def stop(self) -> None: ...
 
+    async def execute_base_movement(self, command: BaseMovementCommand) -> BaseMovementResult: ...
+
     async def execute_manual_arm_command(self, command: ManualArmCommand) -> ManualArmResult: ...
 
 
@@ -57,7 +63,15 @@ class MockRobotAdapter:
         self.role = role or config.robot_role
         self.sensor_id = sensor_id or config.sensor_id
         self.sensors = sensors or [self.sensor_id]
-        self.actions = actions or ["capture_frame", "stop", "hold_position"]
+        self.actions = actions or [
+            "capture_frame",
+            "stop",
+            "hold_position",
+            "move_forward",
+            "move_backward",
+            "rotate_left",
+            "rotate_right",
+        ]
         self.pose = pose or RobotPose()
         self.battery_percent = battery_percent
         self.task = task
@@ -77,7 +91,7 @@ class MockRobotAdapter:
         return {
             "sensors": self.sensors,
             "actions": self.actions,
-            "unsupported_p0_actions": ["relative_move_short", "rotate_in_place_short"],
+            "unsupported_p0_actions": ["waypoint_navigation", "continuous_velocity"],
         }
 
     async def status(self) -> RobotStatus:
@@ -119,6 +133,40 @@ class MockRobotAdapter:
         self.task = "stopped"
         return None
 
+    async def execute_base_movement(self, command: BaseMovementCommand) -> BaseMovementResult:
+        if command.action.value not in self.actions:
+            return BaseMovementResult(
+                robot_id=self.id,
+                action=command.action,
+                applied=False,
+                dry_run=True,
+                pose=self.pose,
+                reason=f"{self.id} does not expose base movement.",
+            )
+
+        self.task = "manual_base_movement"
+        sequence = ["stop_before_motion", command.action.value, "stop_after_motion"]
+        if command.action == BaseMovementAction.MOVE_FORWARD:
+            self.pose.x += command.distance_m * math.cos(self.pose.yaw)
+            self.pose.y += command.distance_m * math.sin(self.pose.yaw)
+        elif command.action == BaseMovementAction.MOVE_BACKWARD:
+            self.pose.x -= command.distance_m * math.cos(self.pose.yaw)
+            self.pose.y -= command.distance_m * math.sin(self.pose.yaw)
+        elif command.action == BaseMovementAction.ROTATE_LEFT:
+            self.pose.yaw += math.radians(command.angle_degrees)
+        elif command.action == BaseMovementAction.ROTATE_RIGHT:
+            self.pose.yaw -= math.radians(command.angle_degrees)
+
+        return BaseMovementResult(
+            robot_id=self.id,
+            action=command.action,
+            applied=True,
+            dry_run=True,
+            pose=self.pose,
+            executed_sequence=sequence,
+            reason=command.reason,
+        )
+
     async def execute_manual_arm_command(self, command: ManualArmCommand) -> ManualArmResult:
         return ManualArmResult(
             robot_id=self.id,
@@ -150,6 +198,16 @@ class MockSO101ArmAdapter(MockRobotAdapter):
             note="Mock SO-101 marker agent; human takeover uses bounded dry-run commands.",
         )
         self.joint_positions_degrees = {joint: 0.0 for joint in config.so101_allowed_joints}
+
+    async def execute_base_movement(self, command: BaseMovementCommand) -> BaseMovementResult:
+        return BaseMovementResult(
+            robot_id=self.id,
+            action=command.action,
+            applied=False,
+            dry_run=True,
+            pose=self.pose,
+            reason="SO-101 is a fixed arm and cannot execute base movement.",
+        )
 
     async def capabilities(self) -> dict:
         capabilities = await super().capabilities()

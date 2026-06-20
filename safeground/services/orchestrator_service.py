@@ -7,6 +7,8 @@ from safeground.event_store import Event, JsonlEventStore
 from safeground.mission import MissionRunner
 from safeground.models import (
     AgentDecisionType,
+    BaseMovementCommand,
+    BaseMovementResult,
     CommandRequest,
     EventType,
     ManualArmCommand,
@@ -31,7 +33,7 @@ class OrchestratorService:
     async def robot_statuses(self) -> list[RobotStatus]:
         return [await robot.status() for robot in self.fleet.values()]
 
-    async def start_mission(self, scenario: str = "MINE") -> MissionReport:
+    async def start_mission(self, scenario: str = "FIELD") -> MissionReport:
         runner = self._build_runner()
         self.active_runner = runner
         report = await runner.run(scenario)
@@ -70,6 +72,38 @@ class OrchestratorService:
         self.event_store.emit(
             runner.mission.mission_id,
             EventType.MANUAL_ARM_COMMAND_APPLIED,
+            state=runner.mission.state,
+            robot_id=robot.id,
+            data=result.model_dump(mode="json"),
+        )
+        return result
+
+    async def move_robot_base(
+        self,
+        robot_id: str,
+        command: BaseMovementCommand,
+    ) -> BaseMovementResult:
+        runner = self.active_runner or self._build_runner()
+        self.active_runner = runner
+        robot = self.fleet[robot_id]
+
+        self.event_store.emit(
+            runner.mission.mission_id,
+            EventType.BASE_MOVEMENT_COMMAND_REQUESTED,
+            state=runner.mission.state,
+            robot_id=robot.id,
+            data=command.model_dump(mode="json"),
+        )
+        await runner._transition(MissionState.MANUAL_TAKEOVER)
+        result = await runner.safety.run_base_movement_checked(
+            runner.mission,
+            robot.id,
+            command,
+            lambda: robot.execute_base_movement(command),
+        )
+        self.event_store.emit(
+            runner.mission.mission_id,
+            EventType.BASE_MOVEMENT_COMMAND_APPLIED,
             state=runner.mission.state,
             robot_id=robot.id,
             data=result.model_dump(mode="json"),

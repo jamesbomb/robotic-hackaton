@@ -5,12 +5,12 @@ from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from safeground.models import CommandRequest, ManualArmCommand
+from safeground.models import BaseMovementCommand, CommandRequest, ManualArmCommand
 from safeground.services.orchestrator_service import OrchestratorService
 
 
 class MissionStartRequest(BaseModel):
-    scenario: str = "MINE"
+    scenario: str = "FIELD"
 
 
 service = OrchestratorService()
@@ -82,6 +82,16 @@ async def manual_arm_takeover(robot_id: str, request: ManualArmCommand):
         raise HTTPException(status_code=404, detail="Robot not found")
     try:
         return await service.manual_arm_takeover(robot_id, request)
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/robots/{robot_id}/move")
+async def move_robot_base(robot_id: str, request: BaseMovementCommand):
+    if robot_id not in service.fleet:
+        raise HTTPException(status_code=404, detail="Robot not found")
+    try:
+        return await service.move_robot_base(robot_id, request)
     except PermissionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

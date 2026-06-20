@@ -5,8 +5,8 @@ const emit = defineEmits<{
   command: [text: string, scenario: string];
 }>();
 
-const text = ref("ispeziona settore B2 con scenario dubbio");
-const scenario = ref("MINE");
+const text = ref("ispeziona il campo con lattine arancioni nere e verdi");
+const scenario = ref("FIELD");
 
 function submit() {
   emit("command", text.value, scenario.value);
@@ -21,6 +21,7 @@ function submit() {
     </div>
     <textarea v-model="text" rows="3" />
     <select v-model="scenario">
+      <option>FIELD</option>
       <option>MINE</option>
       <option>NOT_MINE</option>
       <option>UNCERTAIN</option>

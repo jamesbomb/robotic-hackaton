@@ -271,18 +271,38 @@ def save_calib():
 # Cambia SOURCE/CAMERA_INDEX qui sotto, oppure passa --cam N da riga di comando.
 SOURCE = "camera"
 CAMERA_INDEX = 0
+# La sorgente Go2 reale (env del team — twin "Unitree Go2"):
+GO2_TWIN_ID = "758bee49-6668-4733-80f8-da1c0a7134b2"
+GO2_ENV_ID  = "70482104-4736-49df-adc3-06696f906b1f"
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
 def open_cam(idx):
     cap = cv2.VideoCapture(idx); return cap if cap.isOpened() else None
 
 def open_go2():
-    """Frame dal robot — stessa firma read() -> (ok, frame_bgr). Lo swap è SOLO questa funzione."""
+    """Frame dal robot Go2 — read() -> (ok, frame_bgr). Lo swap è SOLO questa funzione.
+
+    Feed reale (notebook del cane): `dog.get_latest_frame()` -> bytes JPEG
+    (richiede `pip install cyberwave[camera]`, stack WebRTC aiortc/av).
+    cv2.imdecode decodifica in BGR -> niente swap R/B. NON usare PIL (darebbe RGB
+    e falserebbe arancione/verde nella classificazione colore)."""
     from cyberwave import Cyberwave
-    cw = Cyberwave(); go2 = cw.twin("unitree/go2"); cw.affect("live")
+    from cw_vision import _api_key
+    cw = Cyberwave(api_key=_api_key()); cw.affect("live")
+    dog = cw.twin(twin_id=GO2_TWIN_ID, environment_id=GO2_ENV_ID)
+
+    def _read():
+        if hasattr(dog, "get_latest_frame"):
+            b = dog.get_latest_frame()
+            if not b:
+                return (False, None)
+            f = cv2.imdecode(np.frombuffer(b, np.uint8), cv2.IMREAD_COLOR)   # -> BGR
+            return (f is not None, f)
+        f = dog.capture_frame("numpy")                                       # fallback
+        return (f is not None, f)
+
     class _Go2Src:
-        def read(self):
-            f = go2.capture_frame("numpy"); return (f is not None, f)
+        def read(self): return _read()
         def release(self): pass
     return _Go2Src()
 

@@ -49,6 +49,18 @@ class BaseMovementAction(StrEnum):
     ROTATE_RIGHT = "rotate_right"
 
 
+class MovementTarget(StrEnum):
+    AUTO = "auto"
+    VIRTUAL = "virtual"
+    PHYSICAL = "physical"
+    BOTH = "both"
+
+
+class RobotActivationMode(StrEnum):
+    READY = "ready"
+    ARMED = "armed"
+
+
 class RecommendedAction(StrEnum):
     REPORT = "REPORT"
     SECOND_VIEW = "SECOND_VIEW"
@@ -89,10 +101,16 @@ class EventType(StrEnum):
     MISSION_REPORTED = "MISSION_REPORTED"
     MISSION_STOPPED = "MISSION_STOPPED"
     RUNTIME_CONFIG_UPDATED = "RUNTIME_CONFIG_UPDATED"
+    CYBERWAVE_ROBOTS_DISCOVERED = "CYBERWAVE_ROBOTS_DISCOVERED"
+    ROBOT_ACTIVATION_UPDATED = "ROBOT_ACTIVATION_UPDATED"
     MANUAL_ARM_COMMAND_REQUESTED = "MANUAL_ARM_COMMAND_REQUESTED"
     MANUAL_ARM_COMMAND_APPLIED = "MANUAL_ARM_COMMAND_APPLIED"
     BASE_MOVEMENT_COMMAND_REQUESTED = "BASE_MOVEMENT_COMMAND_REQUESTED"
     BASE_MOVEMENT_COMMAND_APPLIED = "BASE_MOVEMENT_COMMAND_APPLIED"
+    OBJECT_PICKUP_SESSION_STARTED = "OBJECT_PICKUP_SESSION_STARTED"
+    OBJECT_PICKUP_STEP_RECORDED = "OBJECT_PICKUP_STEP_RECORDED"
+    OBJECT_PICKUP_SESSION_FINISHED = "OBJECT_PICKUP_SESSION_FINISHED"
+    OBJECT_PICKUP_TEMPLATE_REPLAYED = "OBJECT_PICKUP_TEMPLATE_REPLAYED"
     SCOUT_ROUTE_PLANNED = "SCOUT_ROUTE_PLANNED"
     POINT_MAP_UPDATED = "POINT_MAP_UPDATED"
     ROUTE_RECORDED = "ROUTE_RECORDED"
@@ -113,6 +131,7 @@ class SafeGroundConfig(BaseModel):
     event_log_path: Path = Path("safeground_runs/events.jsonl")
     frame_fixture_dir: Path = Path(__file__).parent / "fixtures" / "frames"
     cv_fixture_dir: Path = Path(__file__).parent / "fixtures" / "cv"
+    cyberwave_config_dir: Path = Field(default_factory=lambda: Path.home() / ".cyberwave")
     allowed_actions: set[str] = Field(
         default_factory=lambda: {
             "capture_frame",
@@ -150,6 +169,7 @@ class SafeGroundConfig(BaseModel):
     mqtt_topic_prefix: str = "safeground/robots"
     mqtt_qos: int = Field(default=1, ge=0, le=2)
     mqtt_timeout_s: float = Field(default=2.0, gt=0.0)
+    cyberwave_virtual_sync: bool = True
 
 
 class RobotPose(BaseModel):
@@ -197,6 +217,41 @@ class RuntimeStatus(BaseModel):
     note: str = "Mock adapters are active; no hardware commands are sent."
 
 
+class CyberwaveRobot(BaseModel):
+    twin_uuid: str
+    name: str
+    robot_id: str
+    registry_id: str | None = None
+    slug: str | None = None
+    has_stream: bool = False
+    stream_url: str | None = None
+    browser_url: str | None = None
+    available_actions: list[str] = Field(default_factory=list)
+    source: str = "local"
+    discovered_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class RobotActivationRequest(BaseModel):
+    operator_id: str = "operator"
+    operator_confirmed: bool = False
+    activation_mode: RobotActivationMode = RobotActivationMode.READY
+    allow_physical: bool = False
+    reason: str = "Operator activated robot from SafeGround dashboard."
+
+
+class RobotActivationState(BaseModel):
+    robot_id: str
+    available: bool = False
+    ready: bool = False
+    armed: bool = False
+    activation_mode: RobotActivationMode | None = None
+    physical_enabled: bool = False
+    virtual_enabled: bool = True
+    operator_id: str | None = None
+    reason: str | None = None
+    last_check: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class ObjectMarkRequest(BaseModel):
     label: ClassificationLabel
     operator_id: str = "operator"
@@ -234,6 +289,7 @@ class ManualArmResult(BaseModel):
 
 class BaseMovementCommand(BaseModel):
     action: BaseMovementAction
+    movement_target: MovementTarget = MovementTarget.AUTO
     operator_id: str = "operator"
     operator_confirmed: bool = False
     distance_m: float = 0.25
@@ -262,6 +318,9 @@ class BaseMovementResult(BaseModel):
     applied: bool
     dry_run: bool
     pose: RobotPose
+    movement_target: MovementTarget = MovementTarget.AUTO
+    virtual_applied: bool = False
+    physical_applied: bool = False
     executed_sequence: list[str] = Field(default_factory=list)
     reason: str
 
@@ -304,6 +363,51 @@ class CameraStream(BaseModel):
     source_url: str
     browser_url: str
     status: str = "configured"
+
+
+class ObjectPickupStartRequest(BaseModel):
+    operator_id: str = "operator"
+    operator_confirmed: bool = False
+    object_label: str = "manual_pickup_object"
+    reason: str = "Operator starts assisted object pickup recording."
+
+
+class ObjectPickupFinishRequest(BaseModel):
+    session_id: str | None = None
+    operator_id: str = "operator"
+    save_as_template: bool = True
+    reason: str = "Operator saved assisted object pickup recording."
+
+
+class ObjectPickupReplayRequest(BaseModel):
+    session_id: str
+    operator_id: str = "operator"
+    operator_confirmed: bool = False
+    reason: str = "Operator selected a recorded pickup template."
+
+
+class ObjectPickupStep(BaseModel):
+    step_id: str = Field(default_factory=lambda: f"pickup-step-{uuid4().hex[:8]}")
+    step_type: str
+    robot_id: str
+    action: str
+    data: dict[str, Any] = Field(default_factory=dict)
+    camera_streams: list[CameraStream] = Field(default_factory=list)
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ObjectPickupSession(BaseModel):
+    session_id: str = Field(default_factory=lambda: f"pickup-{uuid4().hex[:8]}")
+    object_label: str
+    operator_id: str
+    status: Literal["recording", "saved", "replayed"] = "recording"
+    go2_posture_action: str = "stand_down"
+    camera_streams: list[CameraStream] = Field(default_factory=list)
+    steps: list[ObjectPickupStep] = Field(default_factory=list)
+    reason: str
+    replay_count: int = 0
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    finished_at: datetime | None = None
 
 
 class Observation(BaseModel):
@@ -443,4 +547,8 @@ class MissionSnapshot(BaseModel):
     robots: list[RobotStatus] = Field(default_factory=list)
     events: list[dict[str, Any]] = Field(default_factory=list)
     camera_streams: list[CameraStream] = Field(default_factory=list)
+    cyberwave_robots: list[CyberwaveRobot] = Field(default_factory=list)
+    robot_activations: list[RobotActivationState] = Field(default_factory=list)
     scout_route: ScoutRouteResult | None = None
+    object_pickup_sessions: list[ObjectPickupSession] = Field(default_factory=list)
+    active_object_pickup_session: ObjectPickupSession | None = None

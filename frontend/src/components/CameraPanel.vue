@@ -1,14 +1,53 @@
 <script setup lang="ts">
-import type { CameraStream, ClassificationLabel, Observation } from "../types";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import type { CameraStream, ClassificationLabel, Observation, RuntimeMode } from "../types";
 
-defineProps<{
+const props = defineProps<{
   observation: Observation | null;
   streams: CameraStream[];
+  runtimeMode: RuntimeMode;
 }>();
 
 const emit = defineEmits<{
   mark: [label: ClassificationLabel];
 }>();
+
+const latestFrameSrc = ref("");
+const latestFrameAvailable = ref(false);
+let refreshTimer: number | null = null;
+
+const latestFrameRobotId = computed(() => props.observation?.robot_id ?? "go2");
+const shouldPollLatestFrame = computed(() => props.runtimeMode !== "mock");
+
+function refreshLatestFrame() {
+  if (!shouldPollLatestFrame.value) {
+    latestFrameSrc.value = "";
+    latestFrameAvailable.value = false;
+    return;
+  }
+  latestFrameSrc.value = `/api/robots/${latestFrameRobotId.value}/latest-frame?t=${Date.now()}`;
+}
+
+function handleLatestFrameLoad() {
+  latestFrameAvailable.value = true;
+}
+
+function handleLatestFrameError() {
+  latestFrameAvailable.value = false;
+}
+
+onMounted(() => {
+  refreshLatestFrame();
+  refreshTimer = window.setInterval(refreshLatestFrame, 2000);
+});
+
+onUnmounted(() => {
+  if (refreshTimer !== null) {
+    window.clearInterval(refreshTimer);
+  }
+});
+
+watch([latestFrameRobotId, shouldPollLatestFrame], refreshLatestFrame);
 </script>
 
 <template>
@@ -31,10 +70,25 @@ const emit = defineEmits<{
       No Cyberwave camera stream map found. Run `cyberwave pair` / camera setup first.
     </p>
     <div class="frame-stage">
+      <img
+        v-if="latestFrameSrc"
+        v-show="latestFrameAvailable"
+        class="latest-frame-image"
+        :src="latestFrameSrc"
+        :alt="`${latestFrameRobotId} latest Cyberwave frame`"
+        @load="handleLatestFrameLoad"
+        @error="handleLatestFrameError"
+      />
       <div v-if="observation" class="bbox">
         <span>{{ observation.classification.label }}</span>
       </div>
-      <p v-else>No frame captured yet.</p>
+      <p v-if="!latestFrameAvailable && !observation" class="subtle">
+        {{
+          shouldPollLatestFrame
+            ? "Waiting for Cyberwave latest frame."
+            : "Switch to simulation/live to read latest Cyberwave frames."
+        }}
+      </p>
     </div>
     <div class="camera-mark-controls">
       <span>Mark object</span>

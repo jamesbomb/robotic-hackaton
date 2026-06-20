@@ -15,24 +15,23 @@ const emit = defineEmits<{
   runtimeChange: [command: RuntimeConfigRequest];
 }>();
 
-const selectedRuntime = ref<RuntimeMode>(props.runtimeMode);
-const selectedDryRun = ref(props.dryRun);
-const operatorConfirmed = ref(false);
+const liveEnabled = ref(props.runtimeMode === "live" && !props.dryRun);
 
 watch(
   () => [props.runtimeMode, props.dryRun] as const,
   ([runtimeMode, dryRun]) => {
-    selectedRuntime.value = runtimeMode;
-    selectedDryRun.value = dryRun;
+    liveEnabled.value = runtimeMode === "live" && !dryRun;
   },
 );
 
-function applyRuntime() {
+function toggleLive() {
   emit("runtimeChange", {
-    runtime_mode: selectedRuntime.value,
-    dry_run: selectedDryRun.value,
-    operator_confirmed: operatorConfirmed.value,
-    reason: "Operator changed runtime from the dashboard.",
+    runtime_mode: liveEnabled.value ? "live" : "mock",
+    dry_run: !liveEnabled.value,
+    operator_confirmed: true,
+    reason: liveEnabled.value
+      ? "Operator enabled live non-dry-run from the dashboard toggle."
+      : "Operator returned the dashboard to mock dry-run mode.",
   });
 }
 </script>
@@ -55,23 +54,18 @@ function applyRuntime() {
     </div>
 
     <div class="runtime-controls">
-      <label>
-        Runtime
-        <select v-model="selectedRuntime" :disabled="busy">
-          <option value="mock">mock</option>
-          <option value="simulation">simulation</option>
-          <option value="live">live</option>
-        </select>
+      <label class="runtime-toggle">
+        <span>Dry run</span>
+        <input
+          v-model="liveEnabled"
+          type="checkbox"
+          role="switch"
+          :disabled="busy"
+          @change="toggleLive"
+        />
+        <span class="toggle-track" aria-hidden="true"></span>
+        <span>Live</span>
       </label>
-      <label class="inline-check">
-        <input v-model="selectedDryRun" type="checkbox" :disabled="busy" />
-        Dry run enabled
-      </label>
-      <label class="inline-check">
-        <input v-model="operatorConfirmed" type="checkbox" :disabled="busy" />
-        Operator confirmed
-      </label>
-      <button class="full" :disabled="busy" @click="applyRuntime">Apply Runtime</button>
       <p class="subtle">{{ runtimeNote }}</p>
     </div>
 

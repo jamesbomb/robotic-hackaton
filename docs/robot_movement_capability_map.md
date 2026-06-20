@@ -152,8 +152,19 @@ Cyberwave coincidano.
 | --- | --- |
 | P0 mock/simulation | micro-movimenti base, SO-101 home/hold/nudge/marker mock |
 | P0 live smoke | un micro-movimento mobile o un nudge SO-101, con operatore e stop testato |
-| P1/P2 | waypoint/route, pan-tilt, marker fisico su area sicura |
+| P1/P2 | waypoint/route, pan-tilt, marker fisico su area sicura, raccolta oggetto assistita record/replay |
 | Vietato | Go2 acrobazie, velocity raw continuo da UI/LLM, PWM raw UGV, SO-101 su `MINE` o `UNCERTAIN` |
+
+## Movimento Composto: Raccolta Oggetto Assistita
+
+Sequenza SafeGround:
+
+1. Go2 entra in postura bassa (`stand_down` / low posture) come step prevalidato.
+2. La UI apre il workflow `Object Pickup` e associa i feed video disponibili.
+3. L'operatore controlla SO-101 con comandi bounded (`home`, `hold_position`, `nudge_joint`, `place_safe_marker` se `NOT_MINE`).
+4. Ogni comando SO-101 viene registrato come step del template, insieme ai riferimenti video.
+5. Il template puo' essere riusato dalla UI; in questa fase il replay e' auditable ma non esegue ancora presa autonoma.
+6. In seconda fase, YOLO puo' proporre gli stessi step solo dopo validazione safety e conferma operatore.
 
 ## Fonti
 

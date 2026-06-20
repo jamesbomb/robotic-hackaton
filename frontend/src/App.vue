@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import {
+  activateRobot,
   connectEvents,
+  finishObjectPickup,
   getSnapshot,
   markLatestObject,
+  replayObjectPickup,
   sendBaseMovementCommand,
   sendCommand,
   sendManualArmCommand,
   sendScoutRoutePlan,
   startMission,
+  startObjectPickup,
   stopMission,
   updateRuntime,
 } from "./api";
@@ -17,12 +21,16 @@ import type {
   BaseMovementResult,
   CameraStream,
   ClassificationLabel,
+  CyberwaveRobot,
   EventRecord,
   ManualArmCommandRequest,
   ManualArmResult,
   MapPoint,
   MissionReport,
   MissionSnapshot,
+  ObjectPickupSession,
+  RobotActivationRequest,
+  RobotActivationState,
   RobotStatus,
   RuntimeConfigRequest,
   RuntimeStatus,
@@ -35,7 +43,9 @@ import CommandPalette from "./components/CommandPalette.vue";
 import EventTimeline from "./components/EventTimeline.vue";
 import ManualArmPanel from "./components/ManualArmPanel.vue";
 import MissionHeader from "./components/MissionHeader.vue";
+import ObjectPickupPanel from "./components/ObjectPickupPanel.vue";
 import RiskMap from "./components/RiskMap.vue";
+import RobotActivationPanel from "./components/RobotActivationPanel.vue";
 import RobotFleetPanel from "./components/RobotFleetPanel.vue";
 import SafetyControls from "./components/SafetyControls.vue";
 import ScoutPathPlanner from "./components/ScoutPathPlanner.vue";
@@ -45,7 +55,11 @@ const report = ref<MissionReport | null>(null);
 const robots = ref<RobotStatus[]>([]);
 const events = ref<EventRecord[]>([]);
 const cameraStreams = ref<CameraStream[]>([]);
+const cyberwaveRobots = ref<CyberwaveRobot[]>([]);
+const robotActivations = ref<RobotActivationState[]>([]);
 const scoutRoute = ref<ScoutRouteResult | null>(null);
+const objectPickupSessions = ref<ObjectPickupSession[]>([]);
+const activeObjectPickupSession = ref<ObjectPickupSession | null>(null);
 const runtimeStatus = ref<RuntimeStatus | null>(null);
 const manualArmResult = ref<ManualArmResult | null>(null);
 const baseMovementResult = ref<BaseMovementResult | null>(null);
@@ -69,7 +83,11 @@ async function refresh() {
   robots.value = snapshot.value.robots;
   events.value = snapshot.value.events;
   cameraStreams.value = snapshot.value.camera_streams;
+  cyberwaveRobots.value = snapshot.value.cyberwave_robots;
+  robotActivations.value = snapshot.value.robot_activations;
   scoutRoute.value = snapshot.value.scout_route;
+  objectPickupSessions.value = snapshot.value.object_pickup_sessions;
+  activeObjectPickupSession.value = snapshot.value.active_object_pickup_session;
   runtimeStatus.value = snapshot.value.runtime;
 }
 
@@ -104,6 +122,19 @@ async function runBaseMovement(robotId: string, command: BaseMovementCommandRequ
   error.value = null;
   try {
     baseMovementResult.value = await sendBaseMovementCommand(robotId, command);
+    await refresh();
+  } catch (caught) {
+    error.value = caught instanceof Error ? caught.message : "Unknown error";
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function runRobotActivation(robotId: string, command: RobotActivationRequest) {
+  busy.value = true;
+  error.value = null;
+  try {
+    await activateRobot(robotId, command);
     await refresh();
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : "Unknown error";
@@ -153,6 +184,60 @@ async function planScoutRoute(waypoints: MapPoint[]) {
   }
 }
 
+async function runObjectPickupStart(operatorId: string, objectLabel: string) {
+  busy.value = true;
+  error.value = null;
+  try {
+    activeObjectPickupSession.value = await startObjectPickup({
+      operator_id: operatorId,
+      object_label: objectLabel,
+      operator_confirmed: true,
+      reason: "Operator started assisted object pickup recording from dashboard.",
+    });
+    await refresh();
+  } catch (caught) {
+    error.value = caught instanceof Error ? caught.message : "Unknown error";
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function runObjectPickupFinish(sessionId: string | null) {
+  busy.value = true;
+  error.value = null;
+  try {
+    await finishObjectPickup({
+      session_id: sessionId,
+      operator_id: "operator",
+      save_as_template: true,
+      reason: "Operator saved assisted object pickup recording from dashboard.",
+    });
+    await refresh();
+  } catch (caught) {
+    error.value = caught instanceof Error ? caught.message : "Unknown error";
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function runObjectPickupReplay(sessionId: string, operatorId: string) {
+  busy.value = true;
+  error.value = null;
+  try {
+    await replayObjectPickup({
+      session_id: sessionId,
+      operator_id: operatorId,
+      operator_confirmed: true,
+      reason: "Operator selected recorded pickup template from dashboard.",
+    });
+    await refresh();
+  } catch (caught) {
+    error.value = caught instanceof Error ? caught.message : "Unknown error";
+  } finally {
+    busy.value = false;
+  }
+}
+
 function onEvent(event: EventRecord) {
   events.value = [...events.value, event].slice(-200);
 }
@@ -183,6 +268,14 @@ onUnmounted(() => {
     <div class="console-grid">
       <aside class="left-rail">
         <RobotFleetPanel :robots="robots" />
+        <RobotActivationPanel
+          :cyberwave-robots="cyberwaveRobots"
+          :activations="robotActivations"
+          :runtime-mode="runtimeMode"
+          :dry-run="dryRun"
+          :busy="busy"
+          @activate="(robotId, command) => runRobotActivation(robotId, command)"
+        />
         <SafetyControls
           :dry-run="dryRun"
           :runtime-mode="runtimeMode"
@@ -194,8 +287,12 @@ onUnmounted(() => {
         />
         <BaseMovementPanel
           :robots="robots"
+          :activations="robotActivations"
+          :runtime-mode="runtimeMode"
+          :dry-run="dryRun"
           :busy="busy"
           @move="(robotId, command) => runBaseMovement(robotId, command)"
+          @stop="() => runAction(stopMission)"
         />
         <p v-if="baseMovementResult" class="subtle">
           Last base move: {{ baseMovementResult.robot_id }} /
@@ -218,7 +315,16 @@ onUnmounted(() => {
         <CameraPanel
           :observation="latestObservation"
           :streams="cameraStreams"
+          :runtime-mode="runtimeMode"
           @mark="(label) => markCameraObject(label)"
+        />
+        <ObjectPickupPanel
+          :active-session="activeObjectPickupSession"
+          :sessions="objectPickupSessions"
+          :busy="busy"
+          @start="(operatorId, objectLabel) => runObjectPickupStart(operatorId, objectLabel)"
+          @finish="(sessionId) => runObjectPickupFinish(sessionId)"
+          @replay="(sessionId, operatorId) => runObjectPickupReplay(sessionId, operatorId)"
         />
       </section>
 

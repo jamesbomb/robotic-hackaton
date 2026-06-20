@@ -75,6 +75,28 @@ Use the dashboard `Safety` panel or `POST /api/runtime` to switch between
 requires `operator_confirmed=true` and is audited. Current Python adapters are
 still mock-safe until Cyberwave live adapters are wired.
 
+## Robot Activation
+
+The `Robot Activation` panel discovers local Cyberwave twins, marks robots ready
+for virtual dashboard movement, and arms physical movement only in
+`live + dry_run=false`. Base movement can target `virtual`, `physical`, `both`,
+or `auto`; physical targets require an armed robot and remain bounded.
+
+## Assisted Object Pickup
+
+The dashboard includes an `Object Pickup Workflow` for supervised record/replay:
+Go2 low posture is recorded, SO-101 human takeover commands are captured with
+video references, and `Finish / Save` stores a reusable template. YOLO automation
+is intentionally deferred until the recorded sequence is validated on `NOT_MINE`
+objects with operator confirmation.
+
+## Cyberwave Replay Dry Run
+
+Use `.venv/bin/python -m safeground.cli --replay-recording <recording-dir>` to
+replay recorded Cyberwave frames into the local model channels without starting a
+mission or sending robot commands. See `docs/commands.md` for the YOLO worker
+example.
+
 The default event log is append-only JSONL at `safeground_runs/events.jsonl`.
 Captured mock frames are copied to `safeground_runs/frames/`.
 

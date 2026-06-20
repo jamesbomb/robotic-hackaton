@@ -80,6 +80,30 @@ Aggiungere `--print-events` per vedere la timeline completa:
 .venv/bin/python -m safeground.cli --scenario FIELD --print-events
 ```
 
+## Live Vision Sense Tool
+
+La PR #1 aggiunge `live_vision/`, un tool laptop additivo per il loop `sense` con webcam o frame robot e VLM Cyberwave hostato.
+
+Preparazione:
+
+```bash
+.venv/bin/pip install -e .
+echo "LA_TUA_CYBERWAVE_API_KEY" > live_vision/.cwkey
+```
+
+Avvio webcam:
+
+```bash
+.venv/bin/python live_vision/vision.py --cam 1
+```
+
+Comandi principali nella finestra:
+
+- `V`: abilita/disabilita VLM hostato Cyberwave;
+- `1/2/3`, `T`, drag box: training fallback colore;
+- `S`: salva calibrazione locale;
+- `q`: esce.
+
 ## Safe Route E Seconda Verifica
 
 Ogni missione mock registra la traccia seguita dal robot primario come `route_trace` nel report e come evento `ROUTE_RECORDED` nel log.
@@ -179,8 +203,11 @@ Flusso Web UI consigliato:
 7. Premere `Stop All` per dimostrare override umano.
 8. Usare `Safety -> Runtime` per passare tra `mock`, `simulation` e `live`.
 9. Disattivare `Dry run` solo dopo conferma operatore e check fisici.
-10. In `live + dry_run=false`, i micro-movimenti base pubblicano comandi MQTT `stop -> movimento -> stop`.
-11. Usare i pannelli manuali: micro-movimento bounded e SO-101 takeover.
+10. Aprire `Robot Activation`, verificare i twin Cyberwave disponibili e premere `Ready Virtual`.
+11. In `simulation` o dry-run, usare `Base Movement P0 -> Movement target: Virtual` per muovere i twin nella dashboard Cyberwave.
+12. In `live + dry_run=false`, usare `Arm Physical` solo dopo check fisici; i micro-movimenti base pubblicano comandi MQTT `stop -> movimento -> stop`.
+13. Usare i pannelli manuali: micro-movimento bounded e SO-101 takeover.
+14. Per raccolta oggetto assistita: aprire `Object Pickup Workflow`, premere `Start Recording`, usare SO-101 takeover guardando il feed, poi `Finish / Save` per creare un template riusabile.
 
 ## Runtime Mock / Simulation / Live
 
@@ -190,11 +217,10 @@ Il backend parte in modo sicuro con `mock + dry_run=true`:
 .venv/bin/uvicorn safeground.api.server:app --reload
 ```
 
-Dalla Web UI aprire il pannello `Safety`, scegliere:
+Dalla Web UI aprire il pannello `Safety` e usare il selettore `Dry run / Live`:
 
-- `mock`: fixture e adapter mock;
-- `simulation`: stato runtime simulation, utile per cablare twin simulati;
-- `live`: stato runtime live, da usare solo con operatore presente.
+- `Dry run`: ritorna a `mock + dry_run=true`;
+- `Live`: passa a `live + dry_run=false`, da usare solo con operatore presente.
 
 Per passare a live non dry-run via API:
 
@@ -210,6 +236,117 @@ curl -X POST http://localhost:8000/api/runtime \
 ```
 
 Nota safety: lo switch aggiorna configurazione, snapshot, robot card e audit log.
+
+## Robot Activation E Movimento Virtuale/Fisico
+
+Discovery dei robot Cyberwave disponibili:
+
+```bash
+curl http://localhost:8000/api/cyberwave/robots
+```
+
+Attivazione virtuale:
+
+```bash
+curl -X POST http://localhost:8000/api/robots/go2/activate \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "operator_confirmed": true,
+    "activation_mode": "ready",
+    "allow_physical": false,
+    "reason": "virtual dashboard test"
+  }'
+```
+
+Movimento virtuale del twin nella dashboard Cyberwave:
+
+```bash
+curl -X POST http://localhost:8000/api/robots/go2/move \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "action": "move_forward",
+    "movement_target": "virtual",
+    "operator_confirmed": true,
+    "distance_m": 0.25
+  }'
+```
+
+Per movimento fisico, prima portare il runtime a `live + dry_run=false`, poi
+armare il robot:
+
+```bash
+curl -X POST http://localhost:8000/api/robots/go2/activate \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "operator_confirmed": true,
+    "activation_mode": "armed",
+    "allow_physical": true,
+    "reason": "supervised physical smoke test"
+  }'
+```
+
+Nota safety: `physical` e `both` sono bloccati se il robot non e' armato,
+se `dry_run=true`, o se il runtime non e' `live`.
+
+### Tastiera Web UI
+
+Nel pannello `Base Movement P0`, abilitare `Enable keyboard driving`.
+La mappatura e' pensata per browser e non usa velocity continua:
+
+| Tasto | Azione |
+| --- | --- |
+| `W` / `ArrowUp` | `move_forward` |
+| `S` / `ArrowDown` | `move_backward` |
+| `A` / `ArrowLeft` | `rotate_left` |
+| `D` / `ArrowRight` | `rotate_right` |
+| `Q` | `rotate_left` alternativa ergonomica |
+| `E` | `rotate_right` alternativa ergonomica |
+| `Space` | `Stop All` |
+| `Esc` | disabilita keyboard driving |
+
+Ogni pressione invia un solo micro-comando bounded; tenere premuto un tasto
+non genera uno stream continuo. I tasti sono ignorati mentre il focus e' su
+input, select, textarea, button o campi editabili.
+
+### Frame Go2 In Web UI
+
+Il pattern Cyberwave validato per leggere l'immagine corrente e' equivalente a:
+
+```python
+from cyberwave import Cyberwave
+
+cw = Cyberwave(api_key=CYBERWAVE_API_KEY, environment_id=CYBERWAVE_ENVIRONMENT)
+dog = cw.twin("unitree/go2")
+img_bytes = dog.get_latest_frame()
+```
+
+Nel backend SafeGround questo viene esposto come endpoint read-only:
+
+```text
+GET /api/robots/go2/latest-frame
+```
+
+La Web UI usa l'endpoint nel pannello camera quando il runtime e' `simulation` o `live`, aggiornando l'immagine con cache-busting. Non avvia movimenti: la riga demo `dog.move_forward()` del notebook non va usata per mostrare frame o video.
+
+## Object Pickup Workflow
+
+La raccolta oggetto e' codificata come record/replay supervisionato:
+
+1. `Start Recording` registra lo step Go2 `stand_down` / postura bassa come movimento composto prevalidato.
+2. Il pannello camera mostra i feed configurati da Cyberwave.
+3. L'operatore usa `SO-101 Takeover`; ogni comando manuale viene aggiunto alla sessione.
+4. `Finish / Save` salva il template in `safeground_runs/object_pickup_sessions.json`.
+5. `Reuse Template` seleziona la sequenza e registra un replay auditable, senza esecuzione autonoma YOLO.
+
+API:
+
+```bash
+curl -X POST http://localhost:8000/api/object-pickup/start \
+  -H 'Content-Type: application/json' \
+  -d '{"operator_confirmed": true, "object_label": "safe_object"}'
+```
+
+La futura fase YOLO dovra' usare lo stesso template solo dopo validazione su target `NOT_MINE`, workspace libero e conferma operatore.
 
 ### MQTT Movement Bridge
 
@@ -247,6 +384,130 @@ Payload essenziale:
 ```
 
 Prima del live verificare broker, topic reale, controller policy/action list e comportamento dello stop sul robot fisico.
+
+### Cyberwave YOLO Can Color Workflow
+
+Workflow Cyberwave creato da CLI:
+
+```text
+name: SafeGround Can Color Triage
+uuid: add9b071-ac39-4c3c-9fe1-41d410ffab72
+template: object-detection
+url: https://cyberwave.com/workflows/add9b071-ac39-4c3c-9fe1-41d410ffab72
+```
+
+Stato operativo:
+
+- il workflow remoto esiste ed e' attivo, ma va ancora completato nell'editor Cyberwave con environment, twin e nodi camera/model;
+- il worker edge custom e' installato come `safeground_can_color_triage.py`;
+- il modello locale bindato e' `yoloe-26n-seg.pt`, camera `default`, twin UGV Beast `8a40ed9f-349c-44d2-98c0-3a2282134839`;
+- il worker ascolta anche il twin Go2 `758bee49-6668-4733-80f8-da1c0a7134b2` come Verification Scout.
+
+Mapping SafeGround:
+
+```text
+lattina verde    -> NOT_MINE / SAFE / REPORT
+lattina arancione -> MINE / DANGER / REPORT
+lattina nera     -> UNCERTAIN / DOUBT / SECOND_VIEW
+```
+
+Reinstall worker e binding modello:
+
+```bash
+cyberwave worker add cyberwave_workers/safeground_can_color_triage.py --force
+cyberwave model bind \
+  --model yoloe-26n-seg.pt \
+  --camera default \
+  --twin-uuid 8a40ed9f-349c-44d2-98c0-3a2282134839 \
+  --confidence 0.4 \
+  --fps 3 \
+  --classes "can,soda can,tin can,bottle,cup" \
+  --env-file "$HOME/.cyberwave/safeground-models.env"
+```
+
+Verifiche:
+
+```bash
+cyberwave worker list --json
+cyberwave model show --env-file "$HOME/.cyberwave/safeground-models.env"
+cyberwave worker status
+```
+
+Dry-run con replay video/frames Cyberwave:
+
+```bash
+.venv/bin/python -m safeground.cli \
+  --replay-recording /data/recordings/session_001 \
+  --replay-channel frames/default \
+  --replay-speed 1.0
+```
+
+Script equivalente:
+
+```bash
+.venv/bin/python scripts/replay_cyberwave_recording.py \
+  /data/recordings/session_001 \
+  --channel frames/default \
+  --speed 1.0
+```
+
+Questo usa `cyberwave.data.recording.replay()` e ripubblica i frame registrati
+sugli stessi canali locali ascoltati dal worker (`@cw.on_frame(...,
+sensor="default")`). E' dry-run SafeGround: non avvia missioni e non invia
+comandi motore; serve solo a testare il modello locale su un video/recording
+gia' acquisito.
+
+Nota safety: il worker pubblica eventi `safeground_can_triage` e non invia comandi motore. La lattina nera richiede seconda osservazione da altro robot; non va toccata da SO-101 o da operatori durante la demo.
+
+## Collegamento Go2 (solo su richiesta esplicita)
+
+Procedura manuale da usare solo se decisa dall'operatore. Non eseguire questi comandi automaticamente durante setup, test o demo mock.
+
+Accesso SSH al Go2:
+
+```bash
+ssh -p 29839 gobox@2.tcp.eu.ngrok.io
+```
+
+Password:
+
+```text
+gobox123
+```
+
+Per sganciare sessioni attive o con utenti vecchi:
+
+```bash
+sudo cyberwave edge uninstall --channel staging
+```
+
+Risposte alle domande interattive:
+
+```text
+prima domanda: y
+seconda domanda: n
+```
+
+Poi eseguire il pairing confermando alle domande:
+
+```bash
+sudo cyberwave pair
+```
+
+Durante il pairing selezionare sempre:
+
+```text
+Environment: Default environment
+```
+
+Alla domanda `Which twins are physically connected to your edge?`, abilitare tutti i robot mostrati:
+
+```text
+[x] Unitree Go2 (758bee49...)
+[x] SO-101 Go2 (577e2d72...)
+[x] UGV Beast (8a40ed9f...)
+[x] SO-101 UGV (33b64f26...)
+```
 
 ## Comandi Chat
 

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from safeground.agents import CommandInterpreterAgent, OrchestratorAgent
 from safeground.adapters import build_mock_fleet
+from safeground.cyberwave_replay import replay_cyberwave_recording
 from safeground.cv import SCENARIO_TO_FIXTURE, MockCVClient
 from safeground.event_store import JsonlEventStore
 from safeground.mission import MissionRunner
@@ -56,6 +57,27 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Demo flag: mark the primary route as crossing the detected mine.",
     )
+    parser.add_argument(
+        "--replay-recording",
+        type=Path,
+        help="Dry-run a Cyberwave recording directory through local data channels.",
+    )
+    parser.add_argument(
+        "--replay-channel",
+        action="append",
+        help="Cyberwave replay channel; repeat for multiple channels. Defaults to frames/default.",
+    )
+    parser.add_argument(
+        "--replay-speed",
+        type=float,
+        default=1.0,
+        help="Cyberwave replay speed: 1.0 realtime, 2.0 double speed, 0 as fast as possible.",
+    )
+    parser.add_argument(
+        "--replay-loop",
+        action="store_true",
+        help="Loop the Cyberwave replay continuously until interrupted.",
+    )
     return parser
 
 
@@ -71,6 +93,16 @@ async def run_one(config: SafeGroundConfig, scenario: str) -> tuple[MissionRepor
 
 
 async def main_async(args: argparse.Namespace) -> int:
+    if args.replay_recording:
+        result = replay_cyberwave_recording(
+            args.replay_recording,
+            channels=args.replay_channel,
+            speed=args.replay_speed,
+            loop=args.replay_loop,
+        )
+        print(json.dumps(result.as_dict(), indent=2))
+        return 0
+
     command_text = args.command
     if args.voice_wav:
         command_text = transcribe_audio_file(args.voice_wav, model_name=args.whisper_model)

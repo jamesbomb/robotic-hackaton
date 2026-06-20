@@ -15,6 +15,7 @@ from safeground.models import (
     ManualArmAction,
     ManualArmCommand,
     ManualArmResult,
+    MovementTarget,
     RobotPose,
     RobotStatus,
     RuntimeMode,
@@ -154,12 +155,22 @@ class MockRobotAdapter:
                 applied=False,
                 dry_run=True,
                 pose=self.pose,
+                movement_target=command.movement_target,
                 reason=f"{self.id} does not expose base movement.",
             )
 
         self.task = "manual_base_movement"
         sequence = ["stop_before_motion", command.action.value, "stop_after_motion"]
-        if self.runtime_mode == RuntimeMode.LIVE and not self.dry_run:
+        wants_physical = command.movement_target in {MovementTarget.PHYSICAL, MovementTarget.BOTH}
+        wants_virtual = command.movement_target in {MovementTarget.VIRTUAL, MovementTarget.BOTH}
+        if command.movement_target == MovementTarget.AUTO:
+            wants_physical = self.runtime_mode == RuntimeMode.LIVE and not self.dry_run
+            wants_virtual = not wants_physical
+
+        if wants_virtual:
+            self._apply_virtual_pose(command)
+
+        if wants_physical:
             self._publish_live_base_sequence(command, sequence)
             return BaseMovementResult(
                 robot_id=self.id,
@@ -167,12 +178,29 @@ class MockRobotAdapter:
                 applied=True,
                 dry_run=False,
                 pose=self.pose,
+                movement_target=command.movement_target,
+                virtual_applied=wants_virtual,
+                physical_applied=True,
                 executed_sequence=[
                     f"mqtt_publish:{step}" for step in sequence
-                ],
+                ] + (sequence if wants_virtual else []),
                 reason=f"{command.reason} Published to MQTT controller policy topic.",
             )
 
+        return BaseMovementResult(
+            robot_id=self.id,
+            action=command.action,
+            applied=True,
+            dry_run=True,
+            pose=self.pose,
+            movement_target=command.movement_target,
+            virtual_applied=True,
+            physical_applied=False,
+            executed_sequence=sequence,
+            reason=command.reason,
+        )
+
+    def _apply_virtual_pose(self, command: BaseMovementCommand) -> None:
         if command.action == BaseMovementAction.MOVE_FORWARD:
             self.pose.x += command.distance_m * math.cos(self.pose.yaw)
             self.pose.y += command.distance_m * math.sin(self.pose.yaw)
@@ -183,16 +211,6 @@ class MockRobotAdapter:
             self.pose.yaw += math.radians(command.angle_degrees)
         elif command.action == BaseMovementAction.ROTATE_RIGHT:
             self.pose.yaw -= math.radians(command.angle_degrees)
-
-        return BaseMovementResult(
-            robot_id=self.id,
-            action=command.action,
-            applied=True,
-            dry_run=True,
-            pose=self.pose,
-            executed_sequence=sequence,
-            reason=command.reason,
-        )
 
     def _publish_live_base_sequence(
         self,
@@ -257,6 +275,7 @@ class MockSO101ArmAdapter(MockRobotAdapter):
             applied=False,
             dry_run=True,
             pose=self.pose,
+            movement_target=command.movement_target,
             reason="SO-101 is a fixed arm and cannot execute base movement.",
         )
 

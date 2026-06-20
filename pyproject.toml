@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "SafeGround mock-first robot orchestration console."
 requires-python = ">=3.13"
 dependencies = [
+  "cyberwave",
   "fastapi",
+  "numpy",
+  "opencv-python",
   "paho-mqtt",
   "pydantic",
   "uvicorn[standard]",

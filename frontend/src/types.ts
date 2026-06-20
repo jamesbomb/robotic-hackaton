@@ -15,6 +15,8 @@ export type ClassificationLabel = "MINE" | "NOT_MINE" | "UNCERTAIN";
 export type ManualArmAction = "home" | "hold_position" | "nudge_joint" | "place_safe_marker";
 export type BaseMovementAction = "move_forward" | "move_backward" | "rotate_left" | "rotate_right";
 export type RuntimeMode = "mock" | "simulation" | "live";
+export type MovementTarget = "auto" | "virtual" | "physical" | "both";
+export type RobotActivationMode = "ready" | "armed";
 
 export interface RobotPose {
   x: number;
@@ -75,6 +77,7 @@ export interface ManualArmResult {
 
 export interface BaseMovementCommandRequest {
   action: BaseMovementAction;
+  movement_target?: MovementTarget;
   operator_id?: string;
   operator_confirmed: boolean;
   distance_m?: number;
@@ -89,6 +92,9 @@ export interface BaseMovementResult {
   applied: boolean;
   dry_run: boolean;
   pose: RobotPose;
+  movement_target: MovementTarget;
+  virtual_applied: boolean;
+  physical_applied: boolean;
   executed_sequence: string[];
   reason: string;
 }
@@ -125,12 +131,92 @@ export interface ScoutRouteResult {
   reason: string;
 }
 
+export interface ObjectPickupStartRequest {
+  operator_id?: string;
+  operator_confirmed: boolean;
+  object_label?: string;
+  reason?: string;
+}
+
+export interface ObjectPickupFinishRequest {
+  session_id?: string | null;
+  operator_id?: string;
+  save_as_template?: boolean;
+  reason?: string;
+}
+
+export interface ObjectPickupReplayRequest {
+  session_id: string;
+  operator_id?: string;
+  operator_confirmed: boolean;
+  reason?: string;
+}
+
 export interface CameraStream {
   twin_id: string;
   robot_id: string;
   source_url: string;
   browser_url: string;
   status: string;
+}
+
+export interface CyberwaveRobot {
+  twin_uuid: string;
+  name: string;
+  robot_id: string;
+  registry_id: string | null;
+  slug: string | null;
+  has_stream: boolean;
+  stream_url: string | null;
+  browser_url: string | null;
+  available_actions: string[];
+  source: string;
+  discovered_at: string;
+}
+
+export interface RobotActivationRequest {
+  operator_id?: string;
+  operator_confirmed: boolean;
+  activation_mode: RobotActivationMode;
+  allow_physical: boolean;
+  reason?: string;
+}
+
+export interface RobotActivationState {
+  robot_id: string;
+  available: boolean;
+  ready: boolean;
+  armed: boolean;
+  activation_mode: RobotActivationMode | null;
+  physical_enabled: boolean;
+  virtual_enabled: boolean;
+  operator_id: string | null;
+  reason: string | null;
+  last_check: string;
+}
+
+export interface ObjectPickupStep {
+  step_id: string;
+  step_type: string;
+  robot_id: string;
+  action: string;
+  data: Record<string, unknown>;
+  camera_streams: CameraStream[];
+  recorded_at: string;
+}
+
+export interface ObjectPickupSession {
+  session_id: string;
+  object_label: string;
+  operator_id: string;
+  status: "recording" | "saved" | "replayed";
+  go2_posture_action: string;
+  camera_streams: CameraStream[];
+  steps: ObjectPickupStep[];
+  reason: string;
+  replay_count: number;
+  started_at: string;
+  finished_at: string | null;
 }
 
 export interface FrameRef {
@@ -202,7 +288,11 @@ export interface MissionSnapshot {
   robots: RobotStatus[];
   events: EventRecord[];
   camera_streams: CameraStream[];
+  cyberwave_robots: CyberwaveRobot[];
+  robot_activations: RobotActivationState[];
   scout_route: ScoutRouteResult | null;
+  object_pickup_sessions: ObjectPickupSession[];
+  active_object_pickup_session: ObjectPickupSession | null;
 }
 
 export interface EventRecord {

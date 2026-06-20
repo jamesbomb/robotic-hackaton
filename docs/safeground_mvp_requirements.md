@@ -536,6 +536,16 @@ Per ogni robot:
 - nessun comando raw libero verso i giunti;
 - risultato comando e safety check visibili nella timeline.
 
+#### Assisted object pickup
+
+- workflow composto P1/P2, non autonomo in P0 live;
+- step iniziale: Go2 entra in postura bassa/`stand_down` registrata come azione mock o prevalidata;
+- la dashboard abilita SO101 human takeover e mostra i riferimenti video disponibili;
+- ogni comando manuale SO101 durante la sessione viene registrato come step auditable;
+- `Finish / Save` salva la sequenza come template riusabile dall'interfaccia insieme ai riferimenti video;
+- `Replay` seleziona il template e registra l'intenzione dell'operatore, ma non esegue presa autonoma finche' YOLO/VLA non sono validati;
+- futura automazione YOLO: sostituire l'intervento umano solo su target `NOT_MINE`, con workspace libero, conferma operatore e stop testato.
+
 #### Runtime control
 
 - pannello `Safety` con selettore `mock`, `simulation`, `live`;
@@ -543,6 +553,19 @@ Per ogni robot:
 - passaggio a `live` senza dry-run consentito solo con conferma operatore;
 - stato `live_adapter_ready` visibile per distinguere configurazione runtime da adapter hardware realmente cablato;
 - ogni cambio runtime emette evento `RUNTIME_CONFIG_UPDATED`.
+
+#### Robot activation
+
+- pannello `Robot Activation` con discovery dei twin Cyberwave disponibili;
+- discovery da configurazione locale Cyberwave e, quando disponibile, SDK/API;
+- stato per robot: `available`, `ready`, `armed`, stream presente, azioni note;
+- `Ready Virtual` abilita solo movimento virtuale/simulation della dashboard Cyberwave;
+- `Arm Physical` e' disponibile solo in `live + dry_run=false` e richiede conferma operatore;
+- il pannello movimento deve indicare il target comando: `virtual`, `physical`, `both` o `auto`;
+- il pannello movimento supporta comandi tastiera browser: `W`/freccia su avanti, `S`/freccia giu indietro, `A`/freccia sinistra rotazione sinistra, `D`/freccia destra rotazione destra, `Q`/`E` alternative rotazione, `Space` stop, `Esc` disabilita tastiera;
+- la tastiera va abilitata esplicitamente, ignora input testuali/select e ogni pressione invia un solo micro-comando bounded;
+- movimento fisico consentito solo se robot armato, micro-comando bounded e safety check passato;
+- ogni discovery, attivazione e movimento registra eventi audit.
 
 #### Camera panel
 

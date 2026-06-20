@@ -336,9 +336,11 @@ small {
 }
 
 .frame-stage {
+  position: relative;
   display: grid;
   place-items: center;
   min-height: 210px;
+  overflow: hidden;
   border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 16px;
   background:
@@ -346,7 +348,17 @@ small {
     linear-gradient(135deg, rgba(15, 23, 42, 0.7), rgba(2, 6, 23, 0.9));
 }
 
+.latest-frame-image {
+  width: 100%;
+  min-height: 210px;
+  max-height: 360px;
+  object-fit: cover;
+}
+
 .bbox {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
   min-width: 150px;
   min-height: 90px;
   display: grid;
@@ -445,7 +457,9 @@ button.mark-uncertain {
 }
 
 .manual-arm-panel,
-.base-movement-panel {
+.base-movement-panel,
+.object-pickup-panel,
+.robot-activation-panel {
   display: grid;
   gap: 0.7rem;
 }
@@ -502,14 +516,18 @@ button.mark-uncertain {
 }
 
 .manual-arm-panel p,
-.base-movement-panel p {
+.base-movement-panel p,
+.object-pickup-panel p,
+.robot-activation-panel p {
   margin: 0;
   color: #9db4ac;
 }
 
 .manual-arm-panel label,
 .manual-arm-nudge,
-.base-movement-panel label {
+.base-movement-panel label,
+.object-pickup-panel label,
+.robot-activation-panel label {
   display: grid;
   gap: 0.4rem;
 }
@@ -530,11 +548,101 @@ button.mark-uncertain {
   grid-template-columns: repeat(2, 1fr);
 }
 
+.keyboard-control {
+  display: grid;
+  gap: 0.55rem;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 12px;
+  padding: 0.7rem;
+  background: rgba(2, 6, 10, 0.35);
+}
+
+.keyboard-control .inline-check {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.keyboard-control input[type="checkbox"] {
+  width: auto;
+}
+
+.keymap-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.45rem;
+}
+
+.keymap-grid span {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  color: #9db4ac;
+  font-size: 0.82rem;
+}
+
+kbd {
+  min-width: 2.2rem;
+  border: 1px solid rgba(122, 255, 190, 0.28);
+  border-radius: 7px;
+  padding: 0.16rem 0.35rem;
+  color: #dfffea;
+  background: rgba(15, 23, 42, 0.8);
+  text-align: center;
+}
+
 .manual-arm-nudge {
   border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 12px;
   padding: 0.7rem;
   background: rgba(2, 6, 10, 0.35);
+}
+
+.pickup-actions,
+.pickup-template-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.pickup-actions {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.pickup-session-card,
+.pickup-video-list {
+  display: grid;
+  gap: 0.35rem;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 12px;
+  padding: 0.7rem;
+  background: rgba(2, 6, 10, 0.35);
+}
+
+.pickup-session-card.recording {
+  border-color: rgba(250, 204, 21, 0.55);
+}
+
+.pickup-video-list span,
+.pickup-session-card span {
+  color: #8aa39a;
+  font-size: 0.82rem;
+}
+
+.activation-card {
+  display: grid;
+  gap: 0.45rem;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 12px;
+  padding: 0.7rem;
+  background: rgba(2, 6, 10, 0.35);
+}
+
+.activation-card__top,
+.activation-actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.55rem;
+  align-items: center;
 }
 
 .safety-grid {
@@ -549,19 +657,62 @@ button.mark-uncertain {
   margin: 0.8rem 0;
 }
 
-.runtime-controls label {
+.runtime-toggle {
   display: grid;
-  gap: 0.35rem;
-}
-
-.runtime-controls .inline-check {
-  display: flex;
-  gap: 0.45rem;
+  grid-template-columns: auto 48px auto;
+  gap: 0.65rem;
   align-items: center;
+  justify-content: start;
+  color: #b9d6cb;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.72rem;
 }
 
-.runtime-controls input[type="checkbox"] {
-  width: auto;
+.runtime-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.toggle-track {
+  position: relative;
+  width: 48px;
+  height: 26px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.8);
+  transition:
+    background 160ms ease,
+    border-color 160ms ease;
+}
+
+.toggle-track::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #8aa39a;
+  transition:
+    transform 160ms ease,
+    background 160ms ease;
+}
+
+.runtime-toggle input:checked + .toggle-track {
+  border-color: rgba(52, 211, 153, 0.75);
+  background: rgba(20, 83, 45, 0.65);
+}
+
+.runtime-toggle input:checked + .toggle-track::after {
+  transform: translateX(22px);
+  background: #34d399;
+}
+
+.runtime-toggle input:disabled + .toggle-track {
+  opacity: 0.55;
 }
 
 .error-banner {

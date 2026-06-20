@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from safeground.models import (
@@ -10,6 +10,10 @@ from safeground.models import (
     CommandRequest,
     ManualArmCommand,
     ObjectMarkRequest,
+    ObjectPickupFinishRequest,
+    ObjectPickupReplayRequest,
+    ObjectPickupStartRequest,
+    RobotActivationRequest,
     RuntimeConfigRequest,
     ScoutRouteCommand,
 )
@@ -97,6 +101,40 @@ async def camera_streams():
     return service.camera_streams()
 
 
+@app.get("/api/cyberwave/robots")
+async def cyberwave_robots():
+    return service.discover_cyberwave_robots()
+
+
+@app.get("/api/object-pickup/sessions")
+async def object_pickup_sessions():
+    return service.object_pickup_sessions
+
+
+@app.post("/api/object-pickup/start")
+async def start_object_pickup(request: ObjectPickupStartRequest):
+    try:
+        return await service.start_object_pickup(request)
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/object-pickup/finish")
+async def finish_object_pickup(request: ObjectPickupFinishRequest):
+    try:
+        return await service.finish_object_pickup(request)
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/object-pickup/replay")
+async def replay_object_pickup(request: ObjectPickupReplayRequest):
+    try:
+        return await service.replay_object_pickup(request)
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.get("/api/robots/{robot_id}/capabilities")
 async def robot_capabilities(robot_id: str):
     robot = service.fleet[robot_id]
@@ -107,6 +145,16 @@ async def robot_capabilities(robot_id: str):
 async def stop_robot(robot_id: str):
     await service.fleet[robot_id].stop()
     return await service.robot_statuses()
+
+
+@app.post("/api/robots/{robot_id}/activate")
+async def activate_robot(robot_id: str, request: RobotActivationRequest):
+    try:
+        return await service.activate_robot(robot_id, request)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Robot not found") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.post("/api/robots/{robot_id}/manual-arm")
@@ -141,6 +189,21 @@ async def plan_go2_route(request: ScoutRouteCommand):
 async def capture_robot_frame(robot_id: str):
     robot = service.fleet[robot_id]
     return await robot.capture_frame(robot.sensor_id)
+
+
+@app.get("/api/robots/{robot_id}/latest-frame")
+async def latest_robot_frame(robot_id: str):
+    try:
+        frame_bytes, media_type = await service.latest_robot_frame(robot_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Robot not found") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return Response(
+        content=frame_bytes,
+        media_type=media_type,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/api/events")

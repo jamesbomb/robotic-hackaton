@@ -236,11 +236,11 @@ def _handle_frame(twin_uuid: str, robot_role: str, frame: Any, ctx: Any) -> None
     _publish_if_changed(twin_uuid, event_key, payload)
 
 
-@cw.on_frame(PRIMARY_TWIN_UUID, fps=FRAME_FPS)  # type: ignore[name-defined]  # noqa: F821
+@cw.on_frame("8a40ed9f-349c-44d2-98c0-3a2282134839", fps=FRAME_FPS)  # type: ignore[name-defined]  # noqa: F821
 def safeground_primary_can_triage(frame: Any, ctx: Any) -> None:
     _handle_frame(PRIMARY_TWIN_UUID, "Primary Scout", frame, ctx)
 
 
-@cw.on_frame(SECOND_LOOK_TWIN_UUID, fps=FRAME_FPS)  # type: ignore[name-defined]  # noqa: F821
+@cw.on_frame("758bee49-6668-4733-80f8-da1c0a7134b2", fps=FRAME_FPS)  # type: ignore[name-defined]  # noqa: F821
 def safeground_second_look_can_triage(frame: Any, ctx: Any) -> None:
     _handle_frame(SECOND_LOOK_TWIN_UUID, "Verification Scout", frame, ctx)

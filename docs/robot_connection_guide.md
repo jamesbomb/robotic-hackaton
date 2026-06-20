@@ -36,7 +36,7 @@ Cyberwave collega robot e sensori tramite digital twin e Cyberwave Edge.
 
 Flusso generale:
 
-1. Creare o aprire un environment nel dashboard Cyberwave.
+1. Aprire l'environment `Default environment` nel dashboard Cyberwave.
 2. Aggiungere il robot o sensore da catalogo con `Add from Catalog`.
 3. Posizionare il twin in modo coerente con il setup fisico.
 4. Installare Cyberwave CLI/Edge sul compute vicino al robot: laptop, Raspberry Pi, Jetson, onboard computer.
@@ -59,6 +59,15 @@ sudo cyberwave edge install
 ```
 
 La differenza tra `cyberwave pair` e `cyberwave edge install` dipende dal flusso guidato del device/catalogo. In sede, seguire il prompt Cyberwave e registrare il comando effettivamente riuscito.
+
+Durante il pairing SafeGround selezionare sempre `Default environment`. Alla domanda sui twin fisicamente collegati all'edge, abilitare tutti i robot del setup:
+
+```text
+[x] Unitree Go2 (758bee49...)
+[x] SO-101 Go2 (577e2d72...)
+[x] UGV Beast (8a40ed9f...)
+[x] SO-101 UGV (33b64f26...)
+```
 
 ## SDK E Modalita' Runtime
 
@@ -92,6 +101,8 @@ Regole SafeGround:
 - Usare `cw.affect("live")` solo con operatore presente.
 - Validare `stop`, frame capture e health prima di locomozione o giunti.
 - Dalla console SafeGround usare `Safety -> Runtime` per passare da `mock` a `simulation` o `live`; disattivare `dry_run` solo per smoke test supervisionati.
+- Usare `Robot Activation -> Ready Virtual` per muovere solo i twin nella dashboard Cyberwave.
+- Usare `Robot Activation -> Arm Physical` solo in `live + dry_run=false`; e' il gate richiesto prima di ogni movimento fisico.
 - In `live + dry_run=false`, i micro-movimenti base SafeGround vengono inviati via MQTT al controller policy: `safeground/robots/{robot_id}/commands` per default, da validare onsite.
 - Non inviare comandi motore raw da LLM.
 - Registrare `twin_id`, `environment_id`, `sensor_id`, driver attivo e comando di pairing riuscito.
@@ -134,6 +145,18 @@ go2 = cw.twin("unitree/go2")
 # Smoke test non distruttivo: preferire frame/telemetry a movimento.
 frame_path = go2.capture_frame()
 ```
+
+Per la Web UI SafeGround, il recupero frame live usa lo stesso twin Go2 ma legge solo l'ultimo frame:
+
+```python
+from cyberwave import Cyberwave
+
+cw = Cyberwave(api_key=CYBERWAVE_API_KEY, environment_id=CYBERWAVE_ENVIRONMENT)
+dog = cw.twin("unitree/go2")
+img_bytes = dog.get_latest_frame()
+```
+
+Il backend espone questo path come `GET /api/robots/go2/latest-frame`; la UI lo aggiorna periodicamente per mostrare un feed video-like. Non usare `move_forward()` per testare frame o video.
 
 Solo dopo safety rehearsal:
 

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import math
+import os
+from datetime import UTC, datetime
 from pathlib import Path
 
 from safeground.adapters import RobotAdapter, build_mock_fleet
 from safeground.agents import OperatorCommandAgent, OrchestratorAgent
 from safeground.cv import MockCVClient
+from safeground.env import env_bool, load_local_env
 from safeground.event_store import Event, JsonlEventStore
 from safeground.mission import MissionRunner
 from safeground.models import (
@@ -25,8 +29,17 @@ from safeground.models import (
     MissionReport,
     MissionSnapshot,
     MissionState,
+    MovementTarget,
     ObjectMarkRequest,
+    ObjectPickupFinishRequest,
+    ObjectPickupReplayRequest,
+    ObjectPickupSession,
+    ObjectPickupStartRequest,
+    ObjectPickupStep,
     RecommendedAction,
+    RobotActivationMode,
+    RobotActivationRequest,
+    RobotActivationState,
     RobotStatus,
     RuntimeConfigRequest,
     RuntimeMode,
@@ -34,19 +47,32 @@ from safeground.models import (
     SafeGroundConfig,
     ScoutRouteCommand,
     ScoutRouteResult,
+    CyberwaveRobot,
 )
 from safeground.safety import SafetyGovernor
 
 
 class OrchestratorService:
     def __init__(self, config: SafeGroundConfig | None = None) -> None:
-        self.config = config or SafeGroundConfig()
+        load_local_env()
+        runtime_mode = RuntimeMode(os.environ.get("SAFEGROUND_RUNTIME_MODE", RuntimeMode.MOCK.value))
+        self.config = config or SafeGroundConfig(
+            runtime_mode=runtime_mode,
+            dry_run=env_bool("SAFEGROUND_DRY_RUN", True),
+        )
         self.event_store = JsonlEventStore(self.config.event_log_path)
         self.fleet = build_mock_fleet(self.config)
         self.latest_report: MissionReport | None = None
         self.latest_scout_route: ScoutRouteResult | None = None
+        self.object_pickup_sessions: list[ObjectPickupSession] = []
+        self.active_object_pickup_session: ObjectPickupSession | None = None
+        self.robot_activations: dict[str, RobotActivationState] = {
+            robot_id: RobotActivationState(robot_id=robot_id)
+            for robot_id in self.fleet
+        }
         self.active_runner: MissionRunner | None = None
         self._sync_adapter_runtime()
+        self._load_object_pickup_sessions()
 
     async def robot_statuses(self) -> list[RobotStatus]:
         return [await robot.status() for robot in self.fleet.values()]
@@ -95,7 +121,7 @@ class OrchestratorService:
         return status
 
     def camera_streams(self) -> list[CameraStream]:
-        path = Path.home() / ".cyberwave" / "camera_streams.json"
+        path = self.config.cyberwave_config_dir / "camera_streams.json"
         if not path.exists():
             return []
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -122,6 +148,232 @@ class OrchestratorService:
                 )
             )
         return streams
+
+    def discover_cyberwave_robots(self, *, emit_event: bool = True) -> list[CyberwaveRobot]:
+        config_dir = self.config.cyberwave_config_dir
+        environment_path = config_dir / "environment.json"
+        streams_by_twin = {stream.twin_id: stream for stream in self.camera_streams()}
+        robots: list[CyberwaveRobot] = []
+
+        if environment_path.exists():
+            raw_environment = json.loads(environment_path.read_text(encoding="utf-8"))
+            for twin_uuid in raw_environment.get("twin_uuids", []):
+                twin_path = config_dir / f"{twin_uuid}.json"
+                if not twin_path.exists():
+                    continue
+                raw_twin = json.loads(twin_path.read_text(encoding="utf-8"))
+                asset = raw_twin.get("asset", {})
+                metadata = asset.get("metadata", {})
+                registry_id = asset.get("registry_id")
+                robot_id = self._robot_id_from_twin(
+                    twin_uuid,
+                    raw_twin.get("name", ""),
+                    registry_id,
+                )
+                stream = streams_by_twin.get(twin_uuid)
+                robots.append(
+                    CyberwaveRobot(
+                        twin_uuid=twin_uuid,
+                        name=raw_twin.get("name") or asset.get("name") or robot_id,
+                        robot_id=robot_id,
+                        registry_id=registry_id,
+                        slug=asset.get("slug"),
+                        has_stream=stream is not None,
+                        stream_url=stream.source_url if stream else None,
+                        browser_url=stream.browser_url if stream else None,
+                        available_actions=sorted(
+                            metadata.get("mqtt", {}).get("commands", {}).get("supported", [])
+                        ),
+                    )
+                )
+
+        if not robots:
+            robots = [
+                CyberwaveRobot(
+                    twin_uuid=f"mock-{robot_id}",
+                    name=status.role,
+                    robot_id=robot_id,
+                    registry_id=self._cyberwave_twin_slug(robot_id),
+                    available_actions=status.actions,
+                    source="mock",
+                )
+                for robot_id, status in self._mock_robot_status_map().items()
+            ]
+
+        discovered_ids = {robot.robot_id for robot in robots}
+        for robot_id in discovered_ids:
+            state = self.robot_activations.setdefault(
+                robot_id,
+                RobotActivationState(robot_id=robot_id),
+            )
+            state.available = True
+            state.last_check = self._now()
+        for robot_id, state in self.robot_activations.items():
+            if robot_id not in discovered_ids:
+                state.available = False
+                state.last_check = self._now()
+
+        if emit_event:
+            self.event_store.emit(
+                self.active_runner.mission.mission_id if self.active_runner else "system-runtime",
+                EventType.CYBERWAVE_ROBOTS_DISCOVERED,
+                state=self.active_runner.mission.state if self.active_runner else None,
+                robot_id="cyberwave",
+                data={"robots": [robot.model_dump(mode="json") for robot in robots]},
+            )
+        return robots
+
+    async def activate_robot(
+        self,
+        robot_id: str,
+        request: RobotActivationRequest,
+    ) -> RobotActivationState:
+        if robot_id not in self.fleet:
+            raise KeyError(robot_id)
+        if not request.operator_confirmed:
+            raise PermissionError("operator confirmation is required before activating a robot")
+        if (
+            request.allow_physical
+            and request.activation_mode == RobotActivationMode.ARMED
+            and (self.config.runtime_mode != RuntimeMode.LIVE or self.config.dry_run)
+        ):
+            raise PermissionError("physical arming requires live runtime with dry-run disabled")
+
+        discovered = {robot.robot_id for robot in self.discover_cyberwave_robots(emit_event=False)}
+        state = self.robot_activations.setdefault(
+            robot_id,
+            RobotActivationState(robot_id=robot_id),
+        )
+        state.available = robot_id in discovered or robot_id in self.fleet
+        state.ready = True
+        state.armed = request.activation_mode == RobotActivationMode.ARMED
+        state.activation_mode = request.activation_mode
+        state.physical_enabled = bool(state.armed and request.allow_physical)
+        state.virtual_enabled = True
+        state.operator_id = request.operator_id
+        state.reason = request.reason
+        state.last_check = self._now()
+
+        if robot_id in self.fleet and hasattr(self.fleet[robot_id], "task"):
+            self.fleet[robot_id].task = "armed" if state.armed else "ready"
+
+        self.event_store.emit(
+            self.active_runner.mission.mission_id if self.active_runner else "system-runtime",
+            EventType.ROBOT_ACTIVATION_UPDATED,
+            state=self.active_runner.mission.state if self.active_runner else None,
+            robot_id=robot_id,
+            data={
+                "request": request.model_dump(mode="json"),
+                "activation": state.model_dump(mode="json"),
+            },
+        )
+        return state
+
+    async def latest_robot_frame(self, robot_id: str) -> tuple[bytes, str]:
+        if robot_id not in self.fleet:
+            raise KeyError(robot_id)
+
+        api_key = os.environ.get("CYBERWAVE_API_KEY")
+        environment_id = os.environ.get("CYBERWAVE_ENVIRONMENT")
+        if not api_key or not environment_id:
+            raise RuntimeError("CYBERWAVE_API_KEY and CYBERWAVE_ENVIRONMENT are required.")
+
+        try:
+            from cyberwave import Cyberwave
+        except ImportError as exc:
+            raise RuntimeError("Install cyberwave[camera] to read latest robot frames.") from exc
+
+        cw = Cyberwave(api_key=api_key, environment_id=environment_id)
+        twin = cw.twin(self._cyberwave_twin_slug(robot_id))
+        frame_bytes = twin.get_latest_frame()
+        return frame_bytes, self._image_media_type(frame_bytes)
+
+    async def start_object_pickup(
+        self,
+        request: ObjectPickupStartRequest,
+    ) -> ObjectPickupSession:
+        if not request.operator_confirmed:
+            raise PermissionError("operator confirmation is required before assisted pickup")
+
+        runner = self.active_runner or self._build_runner()
+        self.active_runner = runner
+        streams = self.camera_streams()
+        session = ObjectPickupSession(
+            object_label=request.object_label,
+            operator_id=request.operator_id,
+            camera_streams=streams,
+            reason=request.reason,
+        )
+        low_posture_step = ObjectPickupStep(
+            step_type="go2_posture",
+            robot_id="go2",
+            action="stand_down",
+            data={
+                "description": "Go2 lowers to ground posture before SO-101 assisted pickup.",
+                "safeground_status": "recorded_mock_step",
+            },
+            camera_streams=streams,
+        )
+        session.steps.append(low_posture_step)
+        go2 = self.fleet.get("go2")
+        if go2 is not None and hasattr(go2, "task"):
+            go2.task = "low_posture_for_pickup"
+
+        self.active_object_pickup_session = session
+        self.object_pickup_sessions.append(session)
+        self._persist_object_pickup_sessions()
+        self.event_store.emit(
+            runner.mission.mission_id,
+            EventType.OBJECT_PICKUP_SESSION_STARTED,
+            state=runner.mission.state,
+            robot_id="go2",
+            data=session.model_dump(mode="json"),
+        )
+        return session
+
+    async def finish_object_pickup(
+        self,
+        request: ObjectPickupFinishRequest,
+    ) -> ObjectPickupSession:
+        session = self._object_pickup_session(request.session_id)
+        session.status = "saved" if request.save_as_template else "replayed"
+        session.finished_at = self._now()
+        self.active_object_pickup_session = None
+        self._persist_object_pickup_sessions()
+        self.event_store.emit(
+            self.active_runner.mission.mission_id if self.active_runner else session.session_id,
+            EventType.OBJECT_PICKUP_SESSION_FINISHED,
+            state=self.active_runner.mission.state if self.active_runner else None,
+            robot_id="so101",
+            data={
+                "request": request.model_dump(mode="json"),
+                "session": session.model_dump(mode="json"),
+            },
+        )
+        return session
+
+    async def replay_object_pickup(
+        self,
+        request: ObjectPickupReplayRequest,
+    ) -> ObjectPickupSession:
+        if not request.operator_confirmed:
+            raise PermissionError("operator confirmation is required before replaying a pickup template")
+
+        session = self._object_pickup_session(request.session_id)
+        session.replay_count += 1
+        self._persist_object_pickup_sessions()
+        self.event_store.emit(
+            self.active_runner.mission.mission_id if self.active_runner else session.session_id,
+            EventType.OBJECT_PICKUP_TEMPLATE_REPLAYED,
+            state=self.active_runner.mission.state if self.active_runner else None,
+            robot_id="so101",
+            data={
+                "request": request.model_dump(mode="json"),
+                "session": session.model_dump(mode="json"),
+                "automation_status": "manual template selected; no autonomous YOLO execution yet",
+            },
+        )
+        return session
 
     async def start_mission(self, scenario: str = "FIELD") -> MissionReport:
         runner = self._build_runner()
@@ -216,6 +468,7 @@ class OrchestratorService:
             robot_id=robot.id,
             data=result.model_dump(mode="json"),
         )
+        self._record_object_pickup_arm_step(runner, command, result)
         return result
 
     async def move_robot_base(
@@ -226,6 +479,7 @@ class OrchestratorService:
         runner = self.active_runner or self._build_runner()
         self.active_runner = runner
         robot = self.fleet[robot_id]
+        command = self._resolve_base_movement_target(robot_id, command)
 
         self.event_store.emit(
             runner.mission.mission_id,
@@ -241,6 +495,10 @@ class OrchestratorService:
             command,
             lambda: robot.execute_base_movement(command),
         )
+        if result.virtual_applied:
+            result.executed_sequence.append(
+                self._sync_virtual_cyberwave_pose(robot.id, result.pose)
+            )
         self.event_store.emit(
             runner.mission.mission_id,
             EventType.BASE_MOVEMENT_COMMAND_APPLIED,
@@ -351,7 +609,11 @@ class OrchestratorService:
             robots=await self.robot_statuses(),
             events=[event.model_dump(mode="json") for event in self.events(limit=100)],
             camera_streams=self.camera_streams(),
+            cyberwave_robots=self.discover_cyberwave_robots(emit_event=False),
+            robot_activations=list(self.robot_activations.values()),
             scout_route=self.latest_scout_route,
+            object_pickup_sessions=self.object_pickup_sessions,
+            active_object_pickup_session=self.active_object_pickup_session,
         )
 
     def _build_runner(self) -> MissionRunner:
@@ -377,3 +639,191 @@ class OrchestratorService:
                 robot.runtime_mode = self.config.runtime_mode
             if hasattr(robot, "dry_run"):
                 robot.dry_run = self.config.dry_run
+
+    def _resolve_base_movement_target(
+        self,
+        robot_id: str,
+        command: BaseMovementCommand,
+    ) -> BaseMovementCommand:
+        target = command.movement_target
+        if target == MovementTarget.AUTO:
+            target = (
+                MovementTarget.PHYSICAL
+                if self.config.runtime_mode == RuntimeMode.LIVE and not self.config.dry_run
+                else MovementTarget.VIRTUAL
+            )
+
+        wants_physical = target in {MovementTarget.PHYSICAL, MovementTarget.BOTH}
+        if wants_physical:
+            activation = self.robot_activations.get(robot_id)
+            if self.config.runtime_mode != RuntimeMode.LIVE or self.config.dry_run:
+                raise PermissionError("physical movement requires live runtime with dry-run disabled")
+            if activation is None or not activation.armed or not activation.physical_enabled:
+                raise PermissionError("physical movement requires an armed robot")
+
+        return command.model_copy(update={"movement_target": target})
+
+    def _sync_virtual_cyberwave_pose(self, robot_id: str, pose) -> str:
+        if not self.config.cyberwave_virtual_sync:
+            return "virtual_pose:cyberwave_sync_disabled"
+        if self.config.runtime_mode == RuntimeMode.MOCK:
+            return "virtual_pose:mock_local_only"
+
+        try:
+            from cyberwave import Cyberwave
+        except ImportError:
+            return "virtual_pose:cyberwave_sdk_unavailable"
+
+        try:
+            api_key = os.environ.get("CYBERWAVE_API_KEY")
+            environment_id = os.environ.get("CYBERWAVE_ENVIRONMENT")
+            kwargs = {}
+            if api_key:
+                kwargs["api_key"] = api_key
+            if environment_id:
+                kwargs["environment_id"] = environment_id
+            cw = Cyberwave(**kwargs)
+            cw.affect("simulation")
+            twin = cw.twin(self._cyberwave_twin_slug(robot_id))
+            twin.edit_position(x=pose.x, y=pose.y, z=0.0)
+            twin.edit_rotation(yaw=math.degrees(pose.yaw))
+        except Exception as exc:  # pragma: no cover - depends on local Cyberwave runtime
+            return f"virtual_pose:cyberwave_sync_failed:{exc}"
+
+        return "virtual_pose:cyberwave_simulation_synced"
+
+    def _cyberwave_twin_slug(self, robot_id: str) -> str:
+        env_name = f"SAFEGROUND_CYBERWAVE_TWIN_{robot_id.upper().replace('-', '_')}"
+        configured_slug = os.environ.get(env_name)
+        if configured_slug:
+            return configured_slug
+
+        return {
+            "go2": "unitree/go2",
+            "ugv-beast": "waveshare/ugv-beast",
+            "so101": "the-robot-studio/so101",
+            "so101-ugv": "the-robot-studio/so101",
+            "fixed-camera": "cyberwave/standard-cam",
+        }[robot_id]
+
+    def _robot_id_from_twin(
+        self,
+        twin_uuid: str,
+        name: str,
+        registry_id: str | None,
+    ) -> str:
+        uuid_map = {
+            "758bee49": "go2",
+            "8a40ed9f": "ugv-beast",
+            "577e2d72": "so101",
+            "33b64f26": "so101-ugv",
+        }
+        for prefix, robot_id in uuid_map.items():
+            if twin_uuid.startswith(prefix):
+                return robot_id
+        normalized = f"{name} {registry_id or ''}".lower()
+        if "go2" in normalized:
+            return "go2"
+        if "ugv" in normalized:
+            return "ugv-beast"
+        if "so-101" in normalized or "so101" in normalized:
+            return "so101"
+        return twin_uuid[:8]
+
+    def _mock_robot_status_map(self) -> dict[str, RobotStatus]:
+        return {
+            robot_id: RobotStatus(
+                robot_id=robot_id,
+                role=getattr(robot, "role", robot_id),
+                mode=self.config.runtime_mode,
+                task=getattr(robot, "task", "idle"),
+                battery_percent=getattr(robot, "battery_percent", None),
+                sensors=getattr(robot, "sensors", []),
+                actions=getattr(robot, "actions", []),
+                pose=getattr(robot, "pose"),
+                note=getattr(robot, "note", None),
+            )
+            for robot_id, robot in self.fleet.items()
+        }
+
+    def _image_media_type(self, frame_bytes: bytes) -> str:
+        if frame_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png"
+        if frame_bytes.startswith(b"GIF"):
+            return "image/gif"
+        if frame_bytes.startswith(b"RIFF") and frame_bytes[8:12] == b"WEBP":
+            return "image/webp"
+        return "image/jpeg"
+
+    def _record_object_pickup_arm_step(
+        self,
+        runner: MissionRunner,
+        command: ManualArmCommand,
+        result: ManualArmResult,
+    ) -> None:
+        session = self.active_object_pickup_session
+        if session is None or session.status != "recording":
+            return
+        step = ObjectPickupStep(
+            step_type="so101_manual_arm",
+            robot_id=result.robot_id,
+            action=result.action,
+            data={
+                "command": command.model_dump(mode="json"),
+                "result": result.model_dump(mode="json"),
+            },
+            camera_streams=self.camera_streams(),
+        )
+        session.steps.append(step)
+        session.camera_streams = step.camera_streams or session.camera_streams
+        self._persist_object_pickup_sessions()
+        self.event_store.emit(
+            runner.mission.mission_id,
+            EventType.OBJECT_PICKUP_STEP_RECORDED,
+            state=runner.mission.state,
+            robot_id=result.robot_id,
+            data={
+                "session_id": session.session_id,
+                "step": step.model_dump(mode="json"),
+            },
+        )
+
+    def _object_pickup_session(self, session_id: str | None) -> ObjectPickupSession:
+        if session_id is None and self.active_object_pickup_session is not None:
+            return self.active_object_pickup_session
+        for session in self.object_pickup_sessions:
+            if session.session_id == session_id:
+                return session
+        raise PermissionError("object pickup session not found")
+
+    def _object_pickup_store_path(self) -> Path:
+        return self.config.event_log_path.parent / "object_pickup_sessions.json"
+
+    def _load_object_pickup_sessions(self) -> None:
+        path = self._object_pickup_store_path()
+        if not path.exists():
+            return
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        self.object_pickup_sessions = [
+            ObjectPickupSession.model_validate(item)
+            for item in raw
+        ]
+        self.active_object_pickup_session = next(
+            (session for session in self.object_pickup_sessions if session.status == "recording"),
+            None,
+        )
+
+    def _persist_object_pickup_sessions(self) -> None:
+        path = self._object_pickup_store_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                [session.model_dump(mode="json") for session in self.object_pickup_sessions],
+                indent=2,
+                ensure_ascii=True,
+            ),
+            encoding="utf-8",
+        )
+
+    def _now(self) -> datetime:
+        return datetime.now(UTC)

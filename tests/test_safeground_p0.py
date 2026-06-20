@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +9,7 @@ from pathlib import Path
 from safeground.adapters import MockRobotAdapter
 from safeground.agents import CommandInterpreterAgent
 from safeground.cli import run_command
+from safeground.cyberwave_replay import replay_cyberwave_recording
 from safeground.cv import MockCVClient
 from safeground.event_store import JsonlEventStore
 from safeground.mission import MissionRunner
@@ -20,8 +22,14 @@ from safeground.models import (
     ManualArmCommand,
     MapPoint,
     MissionState,
+    MovementTarget,
     ObjectMarkRequest,
+    ObjectPickupFinishRequest,
+    ObjectPickupReplayRequest,
+    ObjectPickupStartRequest,
     RecommendedAction,
+    RobotActivationMode,
+    RobotActivationRequest,
     RouteSafetyStatus,
     RuntimeConfigRequest,
     RuntimeMode,
@@ -41,9 +49,66 @@ class FakeMqttPublisher:
         self.messages.append((topic, payload))
 
 
+class FakeReplayResult:
+    samples_published = 3
+
+
 class SafeGroundP0Tests(unittest.TestCase):
     def config(self, tmpdir: str) -> SafeGroundConfig:
         return SafeGroundConfig(event_log_path=Path(tmpdir) / "events.jsonl")
+
+    def cyberwave_config(self, tmpdir: str) -> SafeGroundConfig:
+        cyberwave_dir = Path(tmpdir) / "cyberwave"
+        cyberwave_dir.mkdir()
+        go2_uuid = "758bee49-6668-4733-80f8-da1c0a7134b2"
+        ugv_uuid = "8a40ed9f-349c-44d2-98c0-3a2282134839"
+        (cyberwave_dir / "environment.json").write_text(
+            json.dumps({"name": "Default Environment", "twin_uuids": [go2_uuid, ugv_uuid]}),
+            encoding="utf-8",
+        )
+        (cyberwave_dir / f"{go2_uuid}.json").write_text(
+            json.dumps(
+                {
+                    "uuid": go2_uuid,
+                    "name": "Unitree Go2",
+                    "asset": {
+                        "registry_id": "unitree/go2",
+                        "slug": "unitree/catalog/go2",
+                        "metadata": {
+                            "mqtt": {
+                                "commands": {
+                                    "supported": ["move_forward", "move_backward", "stop"]
+                                }
+                            }
+                        },
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (cyberwave_dir / f"{ugv_uuid}.json").write_text(
+            json.dumps(
+                {
+                    "uuid": ugv_uuid,
+                    "name": "UGV Beast",
+                    "asset": {
+                        "registry_id": "waveshare/ugv-beast",
+                        "slug": "cyberwave/catalog/ugv-beast",
+                        "metadata": {"mqtt": {"commands": {"supported": ["move_forward"]}}},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (cyberwave_dir / "camera_streams.json").write_text(
+            json.dumps({"twin_to_stream_url": {go2_uuid: "http://host.docker.internal:8091"}}),
+            encoding="utf-8",
+        )
+        return SafeGroundConfig(
+            event_log_path=Path(tmpdir) / "events.jsonl",
+            cyberwave_config_dir=cyberwave_dir,
+            cyberwave_virtual_sync=False,
+        )
 
     def run_mission(self, scenario: str):
         async def _run():
@@ -308,6 +373,90 @@ class SafeGroundP0Tests(unittest.TestCase):
         self.assertTrue(all(robot.mode == RuntimeMode.LIVE for robot in robot_statuses))
         self.assertIn(EventType.RUNTIME_CONFIG_UPDATED, [event.event_type for event in events])
 
+    def test_cyberwave_discovery_reads_local_environment_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = OrchestratorService(self.cyberwave_config(tmpdir))
+            robots = service.discover_cyberwave_robots()
+
+        go2 = next(robot for robot in robots if robot.robot_id == "go2")
+        ugv = next(robot for robot in robots if robot.robot_id == "ugv-beast")
+        self.assertEqual(go2.registry_id, "unitree/go2")
+        self.assertTrue(go2.has_stream)
+        self.assertEqual(go2.browser_url, "http://localhost:8091")
+        self.assertIn("move_forward", go2.available_actions)
+        self.assertEqual(ugv.registry_id, "waveshare/ugv-beast")
+
+    def test_robot_activation_requires_operator_confirmation(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                service = OrchestratorService(self.cyberwave_config(tmpdir))
+                with self.assertRaises(PermissionError):
+                    await service.activate_robot("go2", RobotActivationRequest())
+                return service.events(limit=None)
+
+        events = asyncio.run(_run())
+
+        self.assertNotIn(EventType.ROBOT_ACTIVATION_UPDATED, [event.event_type for event in events])
+
+    def test_virtual_base_movement_updates_pose_without_mqtt(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                service = OrchestratorService(self.cyberwave_config(tmpdir))
+                fake_mqtt = FakeMqttPublisher()
+                service.fleet["go2"].mqtt_publisher = fake_mqtt
+                await service.update_runtime(
+                    RuntimeConfigRequest(
+                        runtime_mode=RuntimeMode.SIMULATION,
+                        dry_run=True,
+                        operator_confirmed=True,
+                    )
+                )
+                await service.activate_robot(
+                    "go2",
+                    RobotActivationRequest(operator_confirmed=True),
+                )
+                result = await service.move_robot_base(
+                    "go2",
+                    BaseMovementCommand(
+                        action=BaseMovementAction.MOVE_FORWARD,
+                        movement_target=MovementTarget.VIRTUAL,
+                        operator_confirmed=True,
+                        distance_m=0.25,
+                    ),
+                )
+                return result, fake_mqtt.messages
+
+        result, messages = asyncio.run(_run())
+
+        self.assertTrue(result.virtual_applied)
+        self.assertFalse(result.physical_applied)
+        self.assertEqual(messages, [])
+        self.assertAlmostEqual(result.pose.x, 0.45)
+        self.assertTrue(result.executed_sequence[-1].startswith("virtual_pose:"))
+
+    def test_physical_base_movement_requires_armed_robot(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                service = OrchestratorService(self.cyberwave_config(tmpdir))
+                await service.update_runtime(
+                    RuntimeConfigRequest(
+                        runtime_mode=RuntimeMode.LIVE,
+                        dry_run=False,
+                        operator_confirmed=True,
+                    )
+                )
+                with self.assertRaises(PermissionError):
+                    await service.move_robot_base(
+                        "go2",
+                        BaseMovementCommand(
+                            action=BaseMovementAction.MOVE_FORWARD,
+                            movement_target=MovementTarget.PHYSICAL,
+                            operator_confirmed=True,
+                        ),
+                    )
+
+        asyncio.run(_run())
+
     def test_live_non_dry_run_base_movement_publishes_mqtt_sequence(self) -> None:
         async def _run():
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -321,10 +470,19 @@ class SafeGroundP0Tests(unittest.TestCase):
                         operator_confirmed=True,
                     )
                 )
+                await service.activate_robot(
+                    "go2",
+                    RobotActivationRequest(
+                        operator_confirmed=True,
+                        activation_mode=RobotActivationMode.ARMED,
+                        allow_physical=True,
+                    ),
+                )
                 result = await service.move_robot_base(
                     "go2",
                     BaseMovementCommand(
                         action=BaseMovementAction.MOVE_FORWARD,
+                        movement_target=MovementTarget.PHYSICAL,
                         operator_confirmed=True,
                         distance_m=0.25,
                     ),
@@ -346,6 +504,40 @@ class SafeGroundP0Tests(unittest.TestCase):
             "stop",
         ])
         self.assertTrue(all(topic == "safeground/robots/go2/commands" for topic, _ in messages))
+
+    def test_cyberwave_replay_dry_run_publishes_recorded_frames_channel(self) -> None:
+        calls: list[dict] = []
+
+        def backend_factory():
+            return "fake-backend"
+
+        def replay_fn(backend, path, *, channels, speed, loop):
+            calls.append(
+                {
+                    "backend": backend,
+                    "path": path,
+                    "channels": channels,
+                    "speed": speed,
+                    "loop": loop,
+                }
+            )
+            return FakeReplayResult()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = replay_cyberwave_recording(
+                Path(tmpdir),
+                speed=2.0,
+                backend_factory=backend_factory,
+                replay_fn=replay_fn,
+            )
+
+        self.assertTrue(result.dry_run)
+        self.assertEqual(result.samples_published, 3)
+        self.assertEqual(result.channels, ["frames/default"])
+        self.assertEqual(calls[0]["backend"], "fake-backend")
+        self.assertEqual(calls[0]["channels"], ["frames/default"])
+        self.assertEqual(calls[0]["speed"], 2.0)
+        self.assertFalse(calls[0]["loop"])
 
     def test_camera_object_mark_updates_latest_report(self) -> None:
         async def _run():
@@ -415,6 +607,51 @@ class SafeGroundP0Tests(unittest.TestCase):
         events = asyncio.run(_run())
 
         self.assertIn(EventType.SAFETY_CHECK_FAILED, [event.event_type for event in events])
+
+    def test_object_pickup_workflow_records_manual_so101_template(self) -> None:
+        async def _run():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                service = OrchestratorService(self.config(tmpdir))
+                session = await service.start_object_pickup(
+                    ObjectPickupStartRequest(
+                        operator_confirmed=True,
+                        object_label="safe_canister",
+                    )
+                )
+                await service.manual_arm_takeover(
+                    "so101",
+                    ManualArmCommand(
+                        action=ManualArmAction.NUDGE_JOINT,
+                        operator_confirmed=True,
+                        joint_name="gripper",
+                        delta_degrees=1.5,
+                    ),
+                )
+                saved = await service.finish_object_pickup(
+                    ObjectPickupFinishRequest(session_id=session.session_id)
+                )
+                replayed = await service.replay_object_pickup(
+                    ObjectPickupReplayRequest(
+                        session_id=session.session_id,
+                        operator_confirmed=True,
+                    )
+                )
+                snapshot = await service.snapshot()
+                return saved, replayed, snapshot, service.events(limit=None)
+
+        saved, replayed, snapshot, events = asyncio.run(_run())
+
+        self.assertEqual(saved.object_label, "safe_canister")
+        self.assertEqual(saved.status, "saved")
+        self.assertEqual(saved.steps[0].action, "stand_down")
+        self.assertEqual(saved.steps[1].action, ManualArmAction.NUDGE_JOINT)
+        self.assertEqual(replayed.replay_count, 1)
+        self.assertEqual(snapshot.object_pickup_sessions[0].session_id, saved.session_id)
+        event_types = [event.event_type for event in events]
+        self.assertIn(EventType.OBJECT_PICKUP_SESSION_STARTED, event_types)
+        self.assertIn(EventType.OBJECT_PICKUP_STEP_RECORDED, event_types)
+        self.assertIn(EventType.OBJECT_PICKUP_SESSION_FINISHED, event_types)
+        self.assertIn(EventType.OBJECT_PICKUP_TEMPLATE_REPLAYED, event_types)
 
     def test_p0_base_movement_executes_bounded_forward_step(self) -> None:
         async def _run():
@@ -498,12 +735,18 @@ class SafeGroundP0Tests(unittest.TestCase):
 
         self.assertIn("/api/missions/start", paths)
         self.assertIn("/api/runtime", paths)
+        self.assertIn("/api/cyberwave/robots", paths)
         self.assertIn("/api/observations/mark", paths)
         self.assertIn("/api/robots", paths)
+        self.assertIn("/api/robots/{robot_id}/activate", paths)
         self.assertIn("/api/robots/{robot_id}/manual-arm", paths)
         self.assertIn("/api/robots/{robot_id}/move", paths)
         self.assertIn("/api/robots/go2/route-plan", paths)
         self.assertIn("/api/camera-streams", paths)
+        self.assertIn("/api/object-pickup/sessions", paths)
+        self.assertIn("/api/object-pickup/start", paths)
+        self.assertIn("/api/object-pickup/finish", paths)
+        self.assertIn("/api/object-pickup/replay", paths)
         self.assertIn("/ws/events", paths)
 
 

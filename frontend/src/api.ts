@@ -2,12 +2,19 @@ import type {
   BaseMovementCommandRequest,
   BaseMovementResult,
   CameraStream,
+  CyberwaveRobot,
   EventRecord,
   ManualArmCommandRequest,
   ManualArmResult,
   MissionReport,
   ObjectMarkRequest,
+  ObjectPickupFinishRequest,
+  ObjectPickupReplayRequest,
+  ObjectPickupSession,
+  ObjectPickupStartRequest,
   MissionSnapshot,
+  RobotActivationRequest,
+  RobotActivationState,
   RobotStatus,
   RuntimeConfigRequest,
   RuntimeStatus,
@@ -49,6 +56,42 @@ export function getRobots() {
 
 export function getCameraStreams() {
   return request<CameraStream[]>("/api/camera-streams");
+}
+
+export function getCyberwaveRobots() {
+  return request<CyberwaveRobot[]>("/api/cyberwave/robots");
+}
+
+export function activateRobot(robotId: string, command: RobotActivationRequest) {
+  return request<RobotActivationState>(`/api/robots/${robotId}/activate`, {
+    method: "POST",
+    body: JSON.stringify(command),
+  });
+}
+
+export function getObjectPickupSessions() {
+  return request<ObjectPickupSession[]>("/api/object-pickup/sessions");
+}
+
+export function startObjectPickup(command: ObjectPickupStartRequest) {
+  return request<ObjectPickupSession>("/api/object-pickup/start", {
+    method: "POST",
+    body: JSON.stringify(command),
+  });
+}
+
+export function finishObjectPickup(command: ObjectPickupFinishRequest) {
+  return request<ObjectPickupSession>("/api/object-pickup/finish", {
+    method: "POST",
+    body: JSON.stringify(command),
+  });
+}
+
+export function replayObjectPickup(command: ObjectPickupReplayRequest) {
+  return request<ObjectPickupSession>("/api/object-pickup/replay", {
+    method: "POST",
+    body: JSON.stringify(command),
+  });
 }
 
 export function getEvents() {
